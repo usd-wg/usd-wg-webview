@@ -23,6 +23,7 @@ import {
   Scene,
   SRGBColorSpace,
   LinearSRGBColorSpace,
+  Quaternion,
   type ToneMapping,
   TextureLoader,
   Texture,
@@ -52,6 +53,18 @@ interface PickSelection {
   path: string;
   instanceId: number | null;
 }
+
+export type ViewportViewState = {
+  cameraPosition: [number, number, number];
+  orbitTarget: [number, number, number];
+  upAxis: ViewUpAxis;
+};
+
+export type SceneCameraSettings = {
+  fov?: number;
+  near?: number;
+  far?: number;
+};
 
 export type NavigationMode = "orbital" | "game";
 export type ViewUpAxis = "y" | "z";
@@ -118,6 +131,8 @@ export class ThreeViewport {
   private readonly gameMove = new Vector3();
   private readonly gameUp = new Vector3(0, 1, 0);
   private materialXFlipV = true;
+  private pixelRatioSetting: number | null = null;
+  private sceneCameraLocked = false;
 
   constructor(private readonly host: HTMLElement) {
     this.scene = new Scene();
@@ -128,7 +143,7 @@ export class ThreeViewport {
 
     const renderer = new WebGLRenderer({ antialias: true, alpha: false });
     this.renderer = renderer;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(this.getEffectivePixelRatio());
     this.host.appendChild(renderer.domElement);
 
     this.materialXLoader.manager.addHandler(/^data:image\//, new ImageLoader(this.materialXLoader.manager));
@@ -268,7 +283,7 @@ export class ThreeViewport {
       this.controls.dispose();
 
       const renderer = new WebGPURenderer({ antialias: true, alpha: false });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(this.getEffectivePixelRatio());
       renderer.outputColorSpace = previousRenderer.outputColorSpace;
       renderer.toneMapping = previousRenderer.toneMapping;
       renderer.toneMappingExposure = previousRenderer.toneMappingExposure;
@@ -372,7 +387,7 @@ export class ThreeViewport {
 
   setNavigationMode(mode: NavigationMode): void {
     this.navigationMode = mode;
-    this.controls.enabled = mode === "orbital";
+    this.controls.enabled = mode === "orbital" && !this.sceneCameraLocked;
     if (mode === "game") {
       this.frameAnim = null;
       this.syncOrbitTargetToGameHeading();
@@ -399,6 +414,81 @@ export class ThreeViewport {
 
   setOutputColorSpace(colorSpace: ColorSpace): void {
     this.renderer.outputColorSpace = colorSpace;
+  }
+
+  setSceneCameraLocked(locked: boolean): void {
+    this.sceneCameraLocked = locked;
+    this.controls.enabled = this.navigationMode === "orbital" && !locked;
+    if (locked) {
+      this.gamePointerActive = false;
+      this.gameKeys.clear();
+    }
+  }
+
+  isSceneCameraLocked(): boolean {
+    return this.sceneCameraLocked;
+  }
+
+  setPixelRatio(pixelRatio: number | null): void {
+    this.pixelRatioSetting = pixelRatio;
+    this.renderer.setPixelRatio(this.getEffectivePixelRatio());
+    this.resize();
+  }
+
+  getPixelRatio(): number | null {
+    return this.pixelRatioSetting;
+  }
+
+  captureViewState(): ViewportViewState {
+    return {
+      cameraPosition: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+      orbitTarget: [this.controls.target.x, this.controls.target.y, this.controls.target.z],
+      upAxis: this.viewUpAxis,
+    };
+  }
+
+  restoreViewState(state: ViewportViewState): void {
+    this.viewUpAxis = state.upAxis;
+    this.applyViewUpAxis();
+    this.camera.position.set(...state.cameraPosition);
+    this.controls.target.set(...state.orbitTarget);
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+  }
+
+  applySceneCamera(matrix: number[], settings?: SceneCameraSettings): void {
+    if (matrix.length !== 16) {
+      return;
+    }
+
+    const usdMatrix = new Matrix4();
+    usdMatrix.set(...(matrix as Parameters<typeof usdMatrix.set>));
+    usdMatrix.transpose();
+
+    this.stageRoot.updateMatrixWorld(true);
+    const sceneCameraMatrix = this.stageRoot.matrixWorld.clone().multiply(usdMatrix);
+    const position = new Vector3();
+    const orientation = new Quaternion();
+    const scale = new Vector3();
+    sceneCameraMatrix.decompose(position, orientation, scale);
+
+    this.camera.position.copy(position);
+    this.camera.quaternion.copy(orientation);
+    const forward = new Vector3(0, 0, -1).applyQuaternion(orientation);
+    this.controls.target.copy(position).add(forward);
+
+    if (typeof settings?.fov === "number" && Number.isFinite(settings.fov)) {
+      this.camera.fov = Math.max(1, Math.min(179, settings.fov));
+    }
+    if (typeof settings?.near === "number" && Number.isFinite(settings.near) && settings.near > 0) {
+      this.camera.near = settings.near;
+    }
+    if (typeof settings?.far === "number" && Number.isFinite(settings.far) && settings.far > this.camera.near) {
+      this.camera.far = settings.far;
+    }
+
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
   }
 
   setToneMapping(toneMapping: ToneMapping): void {
@@ -1609,6 +1699,9 @@ export class ThreeViewport {
   }
 
   private tickGameNavigation(): void {
+    if (this.sceneCameraLocked) {
+      return;
+    }
     const now = performance.now();
     const deltaSeconds = Math.min((now - this.lastFrameTime) / 1000, 0.05);
     this.lastFrameTime = now;
@@ -1775,6 +1868,10 @@ export class ThreeViewport {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+  }
+
+  private getEffectivePixelRatio(): number {
+    return Math.min(this.pixelRatioSetting ?? window.devicePixelRatio, 2);
   }
 }
 

@@ -16,17 +16,20 @@ import {
   AgXToneMapping,
   CineonToneMapping,
   CustomToneMapping,
+  Euler,
   LinearSRGBColorSpace,
   LinearToneMapping,
+  Matrix4,
   NeutralToneMapping,
   NoToneMapping,
+  Quaternion,
   ReinhardToneMapping,
   SRGBColorSpace,
   type ColorSpace,
   type ToneMapping,
 } from "three";
 
-import { ThreeViewport, type NavigationMode, type ViewUpAxis } from "./viewer/ThreeViewport";
+import { ThreeViewport, type NavigationMode, type SceneCameraSettings, type ViewUpAxis, type ViewportViewState } from "./viewer/ThreeViewport";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -83,6 +86,10 @@ app.innerHTML = `
                   <li><button class="menu-option" data-up-axis="z">Z Up</button></li>
                 </ul>
               </li>
+              <li class="menu-submenu">
+                <button class="menu-option menu-submenu-trigger">Pilot Camera</button>
+                <ul class="menu-dropdown menu-submenu-dropdown" id="sceneCameraMenu"></ul>
+              </li>
             </ul>
           </li>
           <li class="menu-submenu">
@@ -93,6 +100,16 @@ app.innerHTML = `
                 <ul class="menu-dropdown menu-submenu-dropdown">
                   <li><button class="menu-option" data-output-color-space="srgb">sRGB</button></li>
                   <li><button class="menu-option" data-output-color-space="srgb-linear">Linear sRGB</button></li>
+                </ul>
+              </li>
+              <li class="menu-submenu">
+                <button class="menu-option menu-submenu-trigger">Pixel Ratio</button>
+                <ul class="menu-dropdown menu-submenu-dropdown">
+                  <li><button class="menu-option" data-pixel-ratio="auto">Auto</button></li>
+                  <li><button class="menu-option" data-pixel-ratio="1">1x</button></li>
+                  <li><button class="menu-option" data-pixel-ratio="1.25">1.25x</button></li>
+                  <li><button class="menu-option" data-pixel-ratio="1.5">1.5x</button></li>
+                  <li><button class="menu-option" data-pixel-ratio="2">2x</button></li>
                 </ul>
               </li>
               <li class="menu-submenu">
@@ -186,6 +203,9 @@ app.innerHTML = `
       <div class="status-bar" id="statusBar" role="status" aria-live="polite">
         <span class="status-spinner" id="statusSpinner" hidden></span>
         <span class="status-mode" id="materialXModeLabel" hidden>Experimental MaterialX / WebGPU</span>
+        <span class="status-mode" id="statusNavigationLabel">Orbital</span>
+        <span class="status-mode" id="statusPixelRatioLabel">DPR Auto</span>
+        <span class="status-mode" id="statusCameraLabel" hidden></span>
         <span class="status-label" id="statusLabel">Idle</span>
       </div>
       <input id="filePicker" type="file" multiple accept=".usd,.usda,.usdc,.usdz,.mtlx,.zip,.png,.jpg,.jpeg,.webp,.svg,.exr" style="display:none" />
@@ -274,9 +294,13 @@ const playbarScrubber = app.querySelector<HTMLInputElement>("#playbarScrubber");
 const statusSpinner = app.querySelector<HTMLElement>("#statusSpinner");
 const statusLabel = app.querySelector<HTMLElement>("#statusLabel");
 const materialXModeLabel = app.querySelector<HTMLElement>("#materialXModeLabel");
+const statusNavigationLabel = app.querySelector<HTMLElement>("#statusNavigationLabel");
+const statusPixelRatioLabel = app.querySelector<HTMLElement>("#statusPixelRatioLabel");
+const statusCameraLabel = app.querySelector<HTMLElement>("#statusCameraLabel");
 const sceneGraphList = app.querySelector<HTMLElement>("#sceneGraphList");
 const attrPrimPath = app.querySelector<HTMLElement>("#attrPrimPath");
 const attrList = app.querySelector<HTMLElement>("#attrList");
+const sceneCameraMenu = app.querySelector<HTMLElement>("#sceneCameraMenu");
 const statsPanel = app.querySelector<HTMLElement>("#statsPanel")!;
 const statsClose = app.querySelector<HTMLButtonElement>("#statsClose")!;
 const tutorialOverlay = app.querySelector<HTMLElement>("#tutorialOverlay")!;
@@ -301,7 +325,11 @@ if (
   !statusSpinner ||
   !statusLabel ||
   !materialXModeLabel ||
+  !statusNavigationLabel ||
+  !statusPixelRatioLabel ||
+  !statusCameraLabel ||
   !sceneGraphList ||
+  !sceneCameraMenu ||
   !attrPrimPath ||
   !attrList
 ) {
@@ -328,6 +356,11 @@ type ToneMappingChoice =
   | "agx"
   | "neutral"
   | "custom";
+type PixelRatioChoice = "auto" | "1" | "1.25" | "1.5" | "2";
+type SceneCameraOption = {
+  path: string;
+  name: string;
+};
 
 const splatFidelityOptions = [
   { label: "Base Color", maxShDegree: 0 },
@@ -347,6 +380,7 @@ let splatDetailIndex = 1;
 let navigationMode: NavigationMode = "orbital";
 let upAxisChoice: UpAxisChoice = "stage";
 let outputColorSpace: OutputColorSpaceChoice = SRGBColorSpace;
+let pixelRatioChoice: PixelRatioChoice = "auto";
 let toneMappingChoice: ToneMappingChoice = "none";
 let toneMappingExposure = 1;
 let lightingMode: LightingMode = "default";
@@ -362,6 +396,9 @@ if (localStorage.getItem(loadAllPayloadsOnStageOpenStorageKey) === null) {
 let loadAllPayloadsOnStageOpen =
   localStorage.getItem(loadAllPayloadsOnStageOpenStorageKey) !== "false";
 let currentStageSummary: StageSummary | null = null;
+let availableSceneCameras: SceneCameraOption[] = [];
+let pilotedCameraPath: string | null = null;
+let freeViewportViewState: ViewportViewState | null = null;
 type RendererStats = {
   meshes: number;
   vertices: number;
@@ -382,6 +419,23 @@ function setStatus(message: string, busy = false): void {
   statusLabel!.textContent = message;
   statusSpinner!.hidden = !busy;
   materialXModeLabel!.hidden = !viewport.isExperimentalMaterialXMode();
+}
+
+function updateStatusIndicators(): void {
+  statusNavigationLabel!.textContent =
+    pilotedCameraPath ? "Camera Pilot" : navigationMode === "game" ? "Game" : "Orbital";
+  statusPixelRatioLabel!.textContent =
+    `DPR ${pixelRatioChoice === "auto" ? "Auto" : `${pixelRatioChoice}x`}`;
+
+  if (!pilotedCameraPath) {
+    statusCameraLabel!.hidden = true;
+    statusCameraLabel!.textContent = "";
+    return;
+  }
+
+  const activeCamera = availableSceneCameras.find((camera) => camera.path === pilotedCameraPath);
+  statusCameraLabel!.hidden = false;
+  statusCameraLabel!.textContent = activeCamera ? `Cam ${activeCamera.name}` : "Cam";
 }
 
 function waitForUiPaint(): Promise<void> {
@@ -450,6 +504,7 @@ function sampleAnimationFrame(timeCode: number): void {
   if (renderables.length > 0) {
     viewport.updateRenderables(renderables);
   }
+  syncPilotedCamera(timeCode);
 }
 
 function onTick(): void {
@@ -480,6 +535,26 @@ function escHtml(s: string): string {
 let allPrims: SceneGraphPrim[] = [];
 const collapsedNodes = new Set<string>();
 let selectedPrimPath: string | null = null;
+
+function renderSceneCameraMenu(): void {
+  const entries = [
+    `<li><button class="menu-option${pilotedCameraPath === null ? " menu-option--checked" : ""}" data-scene-camera-path="">Free Camera</button></li>`,
+  ];
+
+  if (!availableSceneCameras.length) {
+    entries.push(`<li><button class="menu-option" disabled>No cameras in stage</button></li>`);
+  } else {
+    for (const camera of availableSceneCameras) {
+      entries.push(
+        `<li><button class="menu-option${pilotedCameraPath === camera.path ? " menu-option--checked" : ""}" ` +
+        `data-scene-camera-path="${escHtml(camera.path)}" title="${escHtml(camera.path)}">${escHtml(camera.name)}</button></li>`
+      );
+    }
+  }
+
+  sceneCameraMenu!.innerHTML = entries.join("");
+  updateStatusIndicators();
+}
 
 function isAncestorCollapsed(path: string): boolean {
   const parts = path.split("/").filter(Boolean);
@@ -534,6 +609,16 @@ function _renderSceneGraphList(): void {
 
 function renderSceneGraph(prims: SceneGraphPrim[]): void {
   allPrims = prims;
+  availableSceneCameras = prims
+    .filter((prim) => prim.typeName.toLowerCase() === "camera")
+    .map((prim) => ({
+      path: prim.path,
+      name: prim.name || prim.path.split("/").filter(Boolean).pop() || prim.path,
+    }));
+  if (pilotedCameraPath && !availableSceneCameras.some((camera) => camera.path === pilotedCameraPath)) {
+    void setPilotedCamera(null, false);
+  }
+  renderSceneCameraMenu();
   _renderSceneGraphList();
 }
 
@@ -541,6 +626,9 @@ function clearSceneGraph(): void {
   allPrims = [];
   collapsedNodes.clear();
   selectedPrimPath = null;
+  availableSceneCameras = [];
+  void setPilotedCamera(null, false);
+  renderSceneCameraMenu();
   sceneGraphList!.innerHTML = "";
   attrList!.innerHTML = '<p class="sg-empty">Select a prim to inspect</p>';
   attrPrimPath!.textContent = "";
@@ -961,11 +1049,13 @@ function applyNavigationOptions(): void {
   for (const button of app!.querySelectorAll<HTMLButtonElement>("[data-camera-speed]")) {
     button.classList.toggle("menu-option--checked", Number(button.dataset.cameraSpeed) === gameCameraSpeed);
   }
+  updateStatusIndicators();
 }
 
 function applyUpAxisOptions(): void {
   const effectiveUpAxis = getEffectiveUpAxis(currentStageSummary?.upAxis);
   viewport.setViewUpAxis(effectiveUpAxis);
+  syncPilotedCamera(animCurrent);
 
   for (const button of app!.querySelectorAll<HTMLButtonElement>("[data-up-axis]")) {
     button.classList.toggle("menu-option--checked", button.dataset.upAxis === upAxisChoice);
@@ -978,6 +1068,241 @@ function applyColorSpaceOptions(): void {
   for (const button of app!.querySelectorAll<HTMLButtonElement>("[data-output-color-space]")) {
     button.classList.toggle("menu-option--checked", button.dataset.outputColorSpace === outputColorSpace);
   }
+}
+
+function pixelRatioForChoice(choice: PixelRatioChoice): number | null {
+  return choice === "auto" ? null : Number(choice);
+}
+
+function applyPixelRatioOptions(): void {
+  viewport.setPixelRatio(pixelRatioForChoice(pixelRatioChoice));
+  for (const button of app!.querySelectorAll<HTMLButtonElement>("[data-pixel-ratio]")) {
+    button.classList.toggle("menu-option--checked", button.dataset.pixelRatio === pixelRatioChoice);
+  }
+  updateStatusIndicators();
+}
+
+function parsePrimNumber(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const match = value.match(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+  if (!match) {
+    return undefined;
+  }
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parsePrimNumberList(value: string | undefined): number[] {
+  if (!value) {
+    return [];
+  }
+  return Array.from(value.matchAll(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g), (match) => Number(match[0]))
+    .filter((number) => Number.isFinite(number));
+}
+
+function getSceneCameraSpec(primPath: string): SceneCameraSettings {
+  const attrs = runtime.getPrimAttributes(primPath);
+  const attrMap = new Map(attrs.map((attr) => [attr.name, attr]));
+  const projection = (attrMap.get("projection")?.value ?? "").toLowerCase();
+  if (projection.includes("orthographic")) {
+    return {};
+  }
+
+  const focalLength = parsePrimNumber(attrMap.get("focalLength")?.value);
+  const horizontalAperture = parsePrimNumber(attrMap.get("horizontalAperture")?.value);
+  const verticalAperture = parsePrimNumber(attrMap.get("verticalAperture")?.value);
+  const clippingRange = parsePrimNumberList(attrMap.get("clippingRange")?.value);
+  const spec: SceneCameraSettings = {};
+
+  if (focalLength && (verticalAperture || horizontalAperture)) {
+    const aperture = verticalAperture ?? horizontalAperture!;
+    const fovRadians = 2 * Math.atan(aperture / (2 * focalLength));
+    const fovDegrees = (fovRadians * 180) / Math.PI;
+    if (Number.isFinite(fovDegrees) && fovDegrees > 0) {
+      spec.fov = fovDegrees;
+    }
+  }
+
+  if (clippingRange.length >= 2) {
+    const [near, far] = clippingRange;
+    if (near > 0) {
+      spec.near = near;
+    }
+    if (far > near) {
+      spec.far = far;
+    }
+  }
+
+  return spec;
+}
+
+function buildUsdTransformMatrix(attrMap: Map<string, PrimAttribute>): number[] | null {
+  const xformOrder = attrMap.get("xformOpOrder")?.value ?? "";
+  const orderedOps = Array.from(xformOrder.matchAll(/!?xformOp:[A-Za-z0-9:_-]+!?/g), (match) => match[0]);
+  const fallbackTransform = attrMap.get("xformOp:transform");
+  const ops = orderedOps.length > 0
+    ? orderedOps
+    : fallbackTransform ? ["xformOp:transform"] : [];
+
+  if (!ops.length) {
+    return null;
+  }
+
+  const result = new Matrix4().identity();
+  for (const rawOp of ops) {
+    if (rawOp.includes("resetXformStack")) {
+      result.identity();
+      continue;
+    }
+
+    const invert = rawOp.startsWith("!");
+    const opName = rawOp.replace(/^!/, "").replace(/!$/, "");
+    const attr = attrMap.get(opName);
+    if (!attr?.value) {
+      continue;
+    }
+
+    const values = parsePrimNumberList(attr.value);
+    const opMatrix = new Matrix4();
+
+    if (opName.startsWith("xformOp:transform")) {
+      if (values.length !== 16) {
+        continue;
+      }
+      opMatrix.set(...(values as Parameters<typeof opMatrix.set>));
+      opMatrix.transpose();
+    } else if (opName.startsWith("xformOp:translate")) {
+      if (values.length < 3) continue;
+      opMatrix.makeTranslation(values[0], values[1], values[2]);
+    } else if (opName.startsWith("xformOp:scale")) {
+      if (values.length < 3) continue;
+      opMatrix.makeScale(values[0], values[1], values[2]);
+    } else if (opName.startsWith("xformOp:orient")) {
+      if (values.length < 4) continue;
+      const quat = new Quaternion(values[1], values[2], values[3], values[0]);
+      opMatrix.makeRotationFromQuaternion(quat);
+    } else if (opName.startsWith("xformOp:rotateXYZ")) {
+      if (values.length < 3) continue;
+      opMatrix.makeRotationFromEuler(new Euler(
+        (values[0] * Math.PI) / 180,
+        (values[1] * Math.PI) / 180,
+        (values[2] * Math.PI) / 180,
+        "XYZ"
+      ));
+    } else if (opName.startsWith("xformOp:rotateXZY")) {
+      if (values.length < 3) continue;
+      opMatrix.makeRotationFromEuler(new Euler(
+        (values[0] * Math.PI) / 180,
+        (values[1] * Math.PI) / 180,
+        (values[2] * Math.PI) / 180,
+        "XZY"
+      ));
+    } else if (opName.startsWith("xformOp:rotateYXZ")) {
+      if (values.length < 3) continue;
+      opMatrix.makeRotationFromEuler(new Euler(
+        (values[0] * Math.PI) / 180,
+        (values[1] * Math.PI) / 180,
+        (values[2] * Math.PI) / 180,
+        "YXZ"
+      ));
+    } else if (opName.startsWith("xformOp:rotateYZX")) {
+      if (values.length < 3) continue;
+      opMatrix.makeRotationFromEuler(new Euler(
+        (values[0] * Math.PI) / 180,
+        (values[1] * Math.PI) / 180,
+        (values[2] * Math.PI) / 180,
+        "YZX"
+      ));
+    } else if (opName.startsWith("xformOp:rotateZXY")) {
+      if (values.length < 3) continue;
+      opMatrix.makeRotationFromEuler(new Euler(
+        (values[0] * Math.PI) / 180,
+        (values[1] * Math.PI) / 180,
+        (values[2] * Math.PI) / 180,
+        "ZXY"
+      ));
+    } else if (opName.startsWith("xformOp:rotateZYX")) {
+      if (values.length < 3) continue;
+      opMatrix.makeRotationFromEuler(new Euler(
+        (values[0] * Math.PI) / 180,
+        (values[1] * Math.PI) / 180,
+        (values[2] * Math.PI) / 180,
+        "ZYX"
+      ));
+    } else if (opName.startsWith("xformOp:rotateX")) {
+      if (values.length < 1) continue;
+      opMatrix.makeRotationX((values[0] * Math.PI) / 180);
+    } else if (opName.startsWith("xformOp:rotateY")) {
+      if (values.length < 1) continue;
+      opMatrix.makeRotationY((values[0] * Math.PI) / 180);
+    } else if (opName.startsWith("xformOp:rotateZ")) {
+      if (values.length < 1) continue;
+      opMatrix.makeRotationZ((values[0] * Math.PI) / 180);
+    } else {
+      continue;
+    }
+
+    if (invert) {
+      opMatrix.invert();
+    }
+
+    result.multiply(opMatrix);
+  }
+
+  return result.transpose().toArray();
+}
+
+function getSceneCameraTransform(primPath: string, timeCode: number): number[] | null {
+  const animated = runtime.extractTransformsAtTime(timeCode).find((item) => item.path === primPath);
+  if (animated) {
+    return animated.matrix;
+  }
+
+  const attrs = runtime.getPrimAttributes(primPath);
+  return buildUsdTransformMatrix(new Map(attrs.map((attr) => [attr.name, attr])));
+}
+
+function syncPilotedCamera(timeCode = animCurrent): void {
+  if (!pilotedCameraPath) {
+    return;
+  }
+
+  const transform = getSceneCameraTransform(pilotedCameraPath, timeCode);
+  if (!transform) {
+    return;
+  }
+
+  viewport.applySceneCamera(transform, getSceneCameraSpec(pilotedCameraPath));
+}
+
+async function setPilotedCamera(path: string | null, restoreFreeView = true): Promise<void> {
+  if (pilotedCameraPath === path) {
+    if (path) {
+      syncPilotedCamera(animCurrent);
+    }
+    renderSceneCameraMenu();
+    return;
+  }
+
+  if (path && freeViewportViewState === null) {
+    freeViewportViewState = viewport.captureViewState();
+  }
+
+  pilotedCameraPath = path;
+  viewport.setSceneCameraLocked(!!path);
+
+  if (path) {
+    syncPilotedCamera(animCurrent);
+  } else if (restoreFreeView && freeViewportViewState) {
+    viewport.restoreViewState(freeViewportViewState);
+    freeViewportViewState = null;
+  } else if (!path) {
+    freeViewportViewState = null;
+  }
+
+  renderSceneCameraMenu();
 }
 
 async function applyMaterialXOptions(): Promise<void> {
@@ -1057,6 +1382,7 @@ function syncViewportState(target: ThreeViewport): void {
   target.setGameCameraSpeed(gameCameraSpeed);
   target.setViewUpAxis(getEffectiveUpAxis(currentStageSummary?.upAxis));
   target.setOutputColorSpace(outputColorSpace as ColorSpace);
+  target.setPixelRatio(pixelRatioForChoice(pixelRatioChoice));
   target.setMaterialXFlipV(materialXFlipV);
   target.setToneMapping(toneMappingForChoice(toneMappingChoice));
   target.setToneMappingExposure(toneMappingExposure);
@@ -1068,9 +1394,16 @@ function syncViewportState(target: ThreeViewport): void {
 }
 
 function replaceViewport(): void {
+  const viewState = viewport.captureViewState();
   viewport.dispose();
   viewport = new ThreeViewport(viewportElement!);
   syncViewportState(viewport);
+  if (pilotedCameraPath) {
+    viewport.setSceneCameraLocked(true);
+    syncPilotedCamera(animCurrent);
+  } else {
+    viewport.restoreViewState(viewState);
+  }
   viewport.start(onTick);
 }
 
@@ -1110,6 +1443,22 @@ for (const button of app.querySelectorAll<HTMLButtonElement>("[data-output-color
     applyColorSpaceOptions();
   });
 }
+
+for (const button of app.querySelectorAll<HTMLButtonElement>("[data-pixel-ratio]")) {
+  button.addEventListener("click", () => {
+    pixelRatioChoice = (button.dataset.pixelRatio ?? "auto") as PixelRatioChoice;
+    applyPixelRatioOptions();
+  });
+}
+
+sceneCameraMenu.addEventListener("click", (event) => {
+  const button = (event.target as Element).closest<HTMLButtonElement>("[data-scene-camera-path]");
+  if (!button) {
+    return;
+  }
+  const path = button.dataset.sceneCameraPath || null;
+  void setPilotedCamera(path);
+});
 
 app.querySelector("#menuMaterialXFlipV")?.addEventListener("click", () => {
   materialXFlipV = !materialXFlipV;
@@ -1219,6 +1568,8 @@ applySplatViewOptions();
 applyNavigationOptions();
 applyUpAxisOptions();
 applyColorSpaceOptions();
+applyPixelRatioOptions();
+renderSceneCameraMenu();
 void applyMaterialXOptions();
 applyToneMappingOptions();
 applyLightingOptions();

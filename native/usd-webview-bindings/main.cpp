@@ -65,6 +65,7 @@
 #include "pxr/usd/usd/timeCode.h"
 #include "pxr/usd/usd/variantSets.h"
 #include "pxr/usd/usdGeom/gprim.h"
+#include "pxr/usd/usdGeom/camera.h"
 #include "pxr/usd/usdGeom/metrics.h"
 #include "pxr/usd/usdGeom/mesh.h"
 #include "pxr/usd/usdGeom/pointInstancer.h"
@@ -4422,7 +4423,7 @@ ExtractTransformsAtTime(const std::string& path, double timeCode)
     size_t index = 0;
 
     for (const UsdPrim& prim : UsdPrimRange(stage->GetPseudoRoot())) {
-        if (!prim.IsA<UsdGeomMesh>()) {
+        if (!prim.IsA<UsdGeomMesh>() && !prim.IsA<UsdGeomCamera>()) {
             continue;
         }
         emscripten::val entry = emscripten::val::object();
