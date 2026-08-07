@@ -14,6 +14,13 @@ _CountPrims(const UsdStageRefPtr& stage)
     return count;
 }
 
+bool
+_IsDomeLightPrim(const UsdPrim& prim)
+{
+    return static_cast<bool>(UsdLuxDomeLight(prim)) ||
+           static_cast<bool>(UsdLuxDomeLight_1(prim));
+}
+
 struct StageAuthoredStats
 {
     int meshPrimCount = 0;
@@ -542,7 +549,7 @@ _IsEditableScalarAttribute(const UsdPrim& prim, const UsdAttribute& attr)
 
     const std::string name = attr.GetName().GetString();
     const SdfValueTypeName typeName = attr.GetTypeName();
-    if (UsdLuxDomeLight(prim)) {
+    if (_IsDomeLightPrim(prim)) {
         const bool editableDomeName =
             name == "inputs:intensity" ||
             name == "inputs:exposure" ||
@@ -623,7 +630,7 @@ GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
         result.set(index++, item);
     }
 
-    if (UsdLuxDomeLight(prim) && !prim.HasAttribute(TfToken("inputs:texture:rotation"))) {
+    if (_IsDomeLightPrim(prim) && !prim.HasAttribute(TfToken("inputs:texture:rotation"))) {
         emscripten::val item = emscripten::val::object();
         item.set("name", std::string("inputs:texture:rotation"));
         item.set("typeName", std::string("float"));
@@ -730,7 +737,7 @@ SetPrimAttribute(
     if (!prim || !UsdLuxLightAPI(prim)) return false;
 
     UsdAttribute attr = prim.GetAttribute(TfToken(attrName));
-    if (!attr && UsdLuxDomeLight(prim) && attrName == "inputs:texture:rotation") {
+    if (!attr && _IsDomeLightPrim(prim) && attrName == "inputs:texture:rotation") {
         UsdEditContext ctx(stage, stage->GetSessionLayer());
         attr = prim.CreateAttribute(TfToken(attrName), SdfValueTypeNames->Float);
     }

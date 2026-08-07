@@ -4,7 +4,7 @@ USD Web View has two lighting paths:
 
 - authored USDLux lights extracted from the loaded stage
 - viewer fallback lighting used only when the stage has no direct lights and no
-  loaded DomeLight environment
+  loaded DomeLight/DomeLight_1 environment
 
 The goal is viewport inspection, not renderer parity with Karma, Storm, or a
 path tracer. USDLux attributes are translated to the closest Three.js lighting
@@ -14,28 +14,31 @@ primitive available in the active renderer.
 
 Authored stage lighting takes precedence:
 
-1. A valid USDLux `DomeLight` texture drives the scene environment and
-   background.
+1. A valid USDLux `DomeLight` or `DomeLight_1` texture drives the scene
+   environment and background.
 2. Authored direct USDLux lights replace the default ambient/hemisphere rig.
 3. The default RoomEnvironment plus ambient/hemisphere lights are used only
    when no stage lighting is available.
 
-DomeLight extraction reads the authored texture asset from USD or USDZ package
-contents. If the authored DomeLight intensity/exposure is extremely dim for an
-interactive viewport, the viewer applies display-only compensation and reports
-that in the status bar and console. The USD stage is not modified by this
-compensation.
+DomeLight extraction is based on the USDLux schema type, not the prim name.
+It reads the authored texture asset from USD or USDZ package contents. Latlong
+HDR (`.hdr`), OpenEXR (`.exr`), and ordinary LDR image textures such as JPEG,
+PNG, and WebP are supported. Authored DomeLight intensity/exposure values are
+used directly; the viewer does not brighten dim authored environments.
 
 The viewer also supports a display-side DomeLight rotation attribute,
 `inputs:texture:rotation`, in degrees. If the source stage does not author that
 attribute, the attributes panel shows it as an editable session-layer control.
 Changing it rotates both the IBL environment and visible HDRI background.
+In WebGPU, the visible background rotation follows Three.js
+`Scene.backgroundRotation`; reflected environment rotation is limited by the
+current Three.js WebGPU implementation.
 
 ## Supported USDLux Prims
 
 | USDLux source | WebGL viewport | WebGPU viewport |
 | --- | --- | --- |
-| `DomeLight` | Environment/background texture | Environment/background texture |
+| `DomeLight`, `DomeLight_1` | Environment/background texture | Environment/background texture |
 | `DistantLight` | `DirectionalLight` | `DirectionalLight` |
 | unshaped `SphereLight` | `PointLight` | `PointLight` |
 | shaped `SphereLight` | `SpotLight` | `SpotLight` |
@@ -71,10 +74,11 @@ The viewer extracts these common USDLux inputs when present:
 - light-shape inputs such as `inputs:radius`, `inputs:width`, `inputs:height`,
   and `inputs:angle`
 
-`intensity` and `exposure` are combined as `intensity * 2^exposure`. Diffuse
-and specular lobe weights are folded into the viewport intensity because
-Three.js does not expose the same USDLux lobe split on its direct lights.
-`inputs:colorTemperature` affects light color only when
+`intensity` and `exposure` are combined as `intensity * 2^exposure`.
+DomeLights use that authored value directly for environment lighting and the
+visible background. Diffuse and specular lobe weights are folded into viewport
+intensity for direct lights because Three.js does not expose the same USDLux
+lobe split. `inputs:colorTemperature` affects light color only when
 `inputs:enableColorTemperature` is true. Editing `inputs:colorTemperature` in
 the attributes panel automatically enables that switch for the selected light.
 
@@ -122,6 +126,8 @@ Limitations:
 - no true area-light sampling
 - no path-traced multiple scattering or volumetric contribution
 - no mesh, geometry, portal, plugin, cylinder, or volume light conversion
+- very large HDR/EXR environments may hit browser or adapter memory limits;
+  EXR textures are loaded through the half-float path to keep uploads smaller
 
 ## Gizmos And Editing
 
@@ -151,5 +157,19 @@ DomeLight because the current environment renderer does not apply them.
 ## Regression Coverage
 
 The `usdlux-lights` regression fixture covers the current direct-light
-translation surface. Its baseline is intentionally a viewport-rendering
-baseline, not a renderer-fidelity target.
+translation surface. The `domelight-versioned` fixture covers `DomeLight_1`
+environment extraction by schema type, including an arbitrary prim name and a
+packaged HDR asset. These baselines are viewport-rendering baselines, not
+renderer-fidelity targets.
+
+## TODO
+
+- **Optional WASM64 path** - investigate a WASM64 build for very large USDZ
+  packages, texture payloads, and stage data that are constrained by the
+  current WASM32 memory ceiling. Keep WASM32 as the default until OpenUSD,
+  Emscripten, browser support, CI, and deployment behavior are practical.
+- **Path-traced renderer path** - prototype a separate `three-gpu-pathtracer`
+  mode for higher-fidelity lighting checks. Target better DomeLight sampling,
+  true area-light behavior, shadows, MaterialX/UsdPreviewSurface subset
+  mapping, and eventually volumetric experiments. The raster Three.js viewport
+  should remain the default interactive inspection path.

@@ -141,13 +141,12 @@ _ExtractStageEnvironment(const UsdStageRefPtr& stage)
     const std::string packageRootPath = _PackageRootPathForStage(stage);
 
     for (const UsdPrim& prim : UsdPrimRange(stage->GetPseudoRoot())) {
-        UsdLuxDomeLight domeLight(prim);
-        if (!domeLight) {
+        if (!_IsDomeLightPrim(prim)) {
             continue;
         }
 
         SdfAssetPath textureFile;
-        if (!domeLight.GetTextureFileAttr().Get(&textureFile)) {
+        if (!_GetAttrValue(prim.GetAttribute(TfToken("inputs:texture:file")), &textureFile)) {
             continue;
         }
 
@@ -164,30 +163,21 @@ _ExtractStageEnvironment(const UsdStageRefPtr& stage)
         }
 
         float intensity = 1.0f;
-        domeLight.GetIntensityAttr().Get(&intensity);
+        _GetAttrValue(prim.GetAttribute(TfToken("inputs:intensity")), &intensity);
 
         float exposure = 0.0f;
-        domeLight.GetExposureAttr().Get(&exposure);
+        _GetAttrValue(prim.GetAttribute(TfToken("inputs:exposure")), &exposure);
         const float authoredIntensity = intensity * std::pow(2.0f, exposure);
-        const float viewportCompensation =
-            authoredIntensity > 0.0f && authoredIntensity < 0.25f
-                ? 0.25f / authoredIntensity
-                : 1.0f;
         float rotation = 0.0f;
         _GetAttrValue(prim.GetAttribute(TfToken("inputs:texture:rotation")), &rotation);
 
         emscripten::val environment = emscripten::val::object();
         environment.set("sourcePath", prim.GetPath().GetString());
-        environment.set("intensity", authoredIntensity * viewportCompensation);
+        environment.set("intensity", authoredIntensity);
         environment.set("authoredIntensity", intensity);
         environment.set("authoredExposure", exposure);
-        environment.set("viewportCompensation", viewportCompensation);
+        environment.set("viewportCompensation", 1.0f);
         environment.set("rotation", rotation);
-        if (viewportCompensation > 1.0f) {
-            environment.set(
-                "warning",
-                "Stage DomeLight intensity/exposure is very dim for viewport IBL; applying display-only compensation.");
-        }
         environment.set("texture", texture);
         return environment;
     }

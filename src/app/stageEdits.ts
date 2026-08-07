@@ -50,12 +50,7 @@ export async function applyStageEdit(
       attrPrimPath.textContent = "";
     }
   }
-  setStatus(
-    state.currentStageSummary?.environment?.warning
-      ? "Ready - DomeLight display-compensated"
-      : "Ready",
-    false
-  );
+  setStatus("Ready", false);
 }
 
 export async function applyLightAttributeEdit(refreshAttributes = true): Promise<void> {
@@ -64,12 +59,7 @@ export async function applyLightAttributeEdit(refreshAttributes = true): Promise
   if (refreshAttributes && state.selectedPrimPath) {
     renderAttributes(state.selectedPrimPath, runtime.getPrimAttributes(state.selectedPrimPath));
   }
-  setStatus(
-    state.currentStageSummary?.environment?.warning
-      ? "Ready - DomeLight display-compensated"
-      : "Ready",
-    false
-  );
+  setStatus("Ready", false);
 }
 
 async function refreshStageEnvironment(): Promise<void> {
@@ -88,9 +78,6 @@ async function refreshStageEnvironment(): Promise<void> {
   state.hdriIntensity = environment.intensity ?? 1;
   state.hdriMapLabel = assetLabel(environment.texture.path);
   state.lightingMode = "hdri";
-  if (environment.warning) {
-    console.warn("[USD WebView] Stage environment lighting was display-compensated", environment);
-  }
   if (state.currentStageSummary) {
     state.currentStageSummary.environment = environment;
   }

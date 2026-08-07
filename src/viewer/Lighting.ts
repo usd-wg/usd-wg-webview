@@ -6,6 +6,7 @@ import {
   BufferGeometry,
   type Camera,
   Color,
+  type ColorSpace,
   DirectionalLight,
   DirectionalLightHelper,
   EquirectangularReflectionMapping,
@@ -29,7 +30,9 @@ import {
   SphereGeometry,
   SpotLight,
   SpotLightHelper,
+  SRGBColorSpace,
   Texture,
+  TextureLoader,
   Vector3,
   Vector2,
   type WebGLRenderer,
@@ -48,6 +51,7 @@ const LOCAL_FORWARD = new Vector3(0, 0, -1);
 export class LightingRig {
   private readonly exrLoader = new EXRLoader();
   private readonly hdrLoader = new HDRLoader();
+  private readonly textureLoader = new TextureLoader();
   private readonly raycaster = new Raycaster();
   private readonly ambientLight: AmbientLight;
   private readonly hemisphereLight: HemisphereLight;
@@ -100,8 +104,8 @@ export class LightingRig {
   async loadHdriMap(file: File): Promise<void> {
     const url = URL.createObjectURL(file);
     try {
-      const texture = await this.loadHdriTexture(file.name, url);
-      this.applyHdriTexture(texture, file.name);
+      const environmentTexture = await this.loadHdriTexture(file.name, url, file.type);
+      this.applyHdriTexture(environmentTexture.texture, file.name, environmentTexture.colorSpace);
     } finally {
       URL.revokeObjectURL(url);
     }
@@ -114,8 +118,12 @@ export class LightingRig {
       new Blob([bytes.buffer], { type: asset.mimeType || "application/octet-stream" })
     );
     try {
-      const texture = await this.loadHdriTexture(asset.path, url);
-      this.applyHdriTexture(texture, label ?? asset.path);
+      const environmentTexture = await this.loadHdriTexture(asset.path, url, asset.mimeType);
+      this.applyHdriTexture(
+        environmentTexture.texture,
+        label ?? asset.path,
+        environmentTexture.colorSpace
+      );
     } finally {
       URL.revokeObjectURL(url);
     }
@@ -271,17 +279,28 @@ export class LightingRig {
     this.updateDefaultLightRig();
   }
 
-  private loadHdriTexture(name: string, url: string): Promise<Texture> {
-    if (name.toLowerCase().endsWith(".exr")) {
-      return this.exrLoader.loadAsync(url);
+  private async loadHdriTexture(
+    name: string,
+    url: string,
+    mimeType = ""
+  ): Promise<{ texture: Texture; colorSpace: ColorSpace }> {
+    if (isExrTexture(name, mimeType)) {
+      return { texture: await this.exrLoader.loadAsync(url), colorSpace: LinearSRGBColorSpace };
     }
-    return this.hdrLoader.loadAsync(url);
+    if (isHdrTexture(name, mimeType)) {
+      return { texture: await this.hdrLoader.loadAsync(url), colorSpace: LinearSRGBColorSpace };
+    }
+    return { texture: await this.textureLoader.loadAsync(url), colorSpace: SRGBColorSpace };
   }
 
-  private applyHdriTexture(texture: Texture, name: string): void {
+  private applyHdriTexture(
+    texture: Texture,
+    name: string,
+    colorSpace: ColorSpace
+  ): void {
     texture.name = name;
     texture.mapping = EquirectangularReflectionMapping;
-    texture.colorSpace = LinearSRGBColorSpace;
+    texture.colorSpace = colorSpace;
     texture.needsUpdate = true;
 
     this.disposeHdriTexture();
@@ -730,4 +749,18 @@ function materialsForObject(object: Object3D): Array<{ dispose: () => void }> {
     return [material as { dispose: () => void }];
   }
   return [];
+}
+
+function isExrTexture(name: string, mimeType: string): boolean {
+  const lowerName = name.toLowerCase();
+  const lowerMime = mimeType.toLowerCase();
+  return lowerName.endsWith(".exr") || lowerMime === "image/x-exr";
+}
+
+function isHdrTexture(name: string, mimeType: string): boolean {
+  const lowerName = name.toLowerCase();
+  const lowerMime = mimeType.toLowerCase();
+  return lowerName.endsWith(".hdr") ||
+    lowerMime === "image/vnd.radiance" ||
+    lowerMime === "image/x-hdr";
 }

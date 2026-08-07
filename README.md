@@ -29,9 +29,10 @@ required.
 - **Inspection UI** - scene graph, prim attributes, selection highlighting,
   payload and variant badges, stage summary, renderer stats, up-axis handling,
   and HDRI/default lighting controls.
-- **USDLux lights** - authored dome lights can drive HDRI environment lighting;
-  distant, sphere, rect, and disk lights are converted to viewport lights with
-  selectable gizmos and editable light attributes in the attributes panel.
+- **USDLux lights** - authored `DomeLight`/`DomeLight_1` prims can drive HDRI
+  environment lighting and visible backgrounds; distant, sphere, rect, and disk
+  lights are converted to viewport lights with selectable gizmos and editable
+  light attributes in the attributes panel.
 - **USD 26 compatibility** - works with older USDZ files that authored
   `material:binding` before `UsdShadeMaterialBindingAPI` became a formal
   applied-API schema.

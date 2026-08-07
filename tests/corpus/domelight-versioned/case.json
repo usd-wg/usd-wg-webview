@@ -1,0 +1,12 @@
+{
+  "id": "domelight-versioned",
+  "rootFile": "scene.usda",
+  "tags": ["lighting"],
+  "captures": [
+    { "name": "default" }
+  ],
+  "gate": {
+    "maxMismatchRatio": 0.01,
+    "pixelmatchThreshold": 0.08
+  }
+}
