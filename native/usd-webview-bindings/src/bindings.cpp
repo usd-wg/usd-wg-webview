@@ -27,10 +27,11 @@ EMSCRIPTEN_BINDINGS(usdWebViewBindings)
     emscripten::function("OpenStage", &OpenStage);
     emscripten::function("GetSceneGraph", &GetSceneGraph);
     emscripten::function("GetPrimAttributes", &GetPrimAttributes);
+    emscripten::function("SetPrimAttribute", &SetPrimAttribute);
+    emscripten::function("ExtractStageEnvironment", &ExtractStageEnvironment);
     emscripten::function("ReopenStage", &ReopenStage);
     emscripten::function("SetVariantSelection", &SetVariantSelection);
     emscripten::function("SetPayloadLoaded", &SetPayloadLoaded);
     emscripten::function("SetAllPayloadsLoaded", &SetAllPayloadsLoaded);
     emscripten::function("ExtractGaussianSplats", &ExtractGaussianSplats);
 }
-

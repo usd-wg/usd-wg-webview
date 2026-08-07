@@ -64,7 +64,21 @@ describe("attachMaterialXResources", () => {
       materialX: { path: "m.mtlx", mimeType: "application/xml", data: new Uint8Array() },
     };
     attachMaterialXResources(material, resources);
-    expect(material.materialX?.resources).toBe(resources);
+    expect(material.materialX?.resources).toEqual(resources);
+  });
+
+  it("preserves native MaterialX resources when adding loose-file resources", () => {
+    const nativeResource = { path: "scene.usdz[0/native.jpg]", mimeType: "image/jpeg", data: new Uint8Array([2]) };
+    const material: RenderableMaterial = {
+      materialX: {
+        path: "m.mtlx",
+        mimeType: "application/xml",
+        data: new Uint8Array(),
+        resources: [nativeResource],
+      },
+    };
+    attachMaterialXResources(material, resources);
+    expect(material.materialX?.resources).toEqual([nativeResource, ...resources]);
   });
 
   it("ignores materials without a MaterialX payload", () => {

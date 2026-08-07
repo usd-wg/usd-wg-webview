@@ -36,6 +36,10 @@ export type StageSummary = {
 export type StageEnvironment = {
   sourcePath?: string;
   intensity?: number;
+  authoredIntensity?: number;
+  authoredExposure?: number;
+  viewportCompensation?: number;
+  warning?: string;
   texture: RenderableTexture;
 };
 
@@ -218,6 +222,7 @@ export type PrimAttribute = {
   value?: string;
   valueIsArray?: boolean;
   valueElementCount?: number;
+  editable?: boolean;
   variantOptions?: string[]; // defined when typeName === "variantSet"
 };
 
@@ -232,10 +237,12 @@ export type UsdWebViewBindings = {
   getLastSkelBindingOverlayContents?: (stagePath: string) => string;
   getSceneGraph?: (stagePath: string) => SceneGraphPrim[];
   getPrimAttributes?: (stagePath: string, primPath: string) => PrimAttribute[];
+  setPrimAttribute?: (stagePath: string, primPath: string, attrName: string, value: string) => boolean;
   setVariantSelection?: (stagePath: string, primPath: string, variantSetName: string, selection: string) => boolean;
   setPayloadLoaded?: (stagePath: string, primPath: string, loaded: boolean) => boolean;
   setAllPayloadsLoaded?: (stagePath: string, loaded: boolean) => void;
   extractGaussianSplats?: (stagePath: string) => RenderableGaussianSplat[];
+  extractStageEnvironment?: (stagePath: string) => StageEnvironment | undefined;
   // Unified stage driver (contract v2)
   createStageDriver?: (stagePath: string) => boolean;
   deleteStageDriver?: (stagePath: string) => void;

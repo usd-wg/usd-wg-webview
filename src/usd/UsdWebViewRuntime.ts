@@ -264,6 +264,16 @@ export class UsdWebViewRuntime {
     return this.bindings.getPrimAttributes(this.currentStagePath, primPath);
   }
 
+  setPrimAttribute(primPath: string, attrName: string, value: string): boolean {
+    if (!this.bindings?.setPrimAttribute || !this.currentStagePath) return false;
+    return this.bindings.setPrimAttribute(this.currentStagePath, primPath, attrName, value);
+  }
+
+  extractStageEnvironment() {
+    if (!this.bindings?.extractStageEnvironment || !this.currentStagePath) return undefined;
+    return this.bindings.extractStageEnvironment(this.currentStagePath);
+  }
+
   getSkelDebugInfo(primPath: string, timeA = 0, timeB = 60): unknown {
     if (!this.bindings?.getSkelDebugInfo || !this.currentStagePath) {
       return null;
@@ -320,7 +330,15 @@ export function attachMaterialXResources(
   if (!material?.materialX) {
     return;
   }
-  material.materialX.resources = resources;
+  const merged = [...(material.materialX.resources ?? [])];
+  const seen = new Set(merged.map((resource) => resource.path));
+  for (const resource of resources) {
+    if (!seen.has(resource.path)) {
+      merged.push(resource);
+      seen.add(resource.path);
+    }
+  }
+  material.materialX.resources = merged;
 }
 
 export function isMaterialXResourcePath(path: string): boolean {

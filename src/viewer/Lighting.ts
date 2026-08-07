@@ -6,12 +6,13 @@ import {
   EquirectangularReflectionMapping,
   HemisphereLight,
   LinearSRGBColorSpace,
-  PMREMGenerator,
+  PMREMGenerator as WebGLPMREMGenerator,
+  type RenderTarget,
   type Scene,
   Texture,
   type WebGLRenderer,
-  type WebGLRenderTarget,
 } from "three";
+import { PMREMGenerator as WebGPUPMREMGenerator, type WebGPURenderer } from "three/webgpu";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
 import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
@@ -22,7 +23,7 @@ export class LightingRig {
   private readonly hdrLoader = new HDRLoader();
   private readonly ambientLight: AmbientLight;
   private readonly hemisphereLight: HemisphereLight;
-  private readonly defaultEnvironmentTarget: WebGLRenderTarget;
+  private defaultEnvironmentTarget: RenderTarget;
   private readonly defaultAmbientIntensity = 0.22;
   private readonly defaultHemisphereIntensity = 1.25;
   private readonly defaultEnvironmentIntensity = 0.7;
@@ -35,16 +36,14 @@ export class LightingRig {
     private readonly defaultBackground: Color,
     renderer: WebGLRenderer
   ) {
-    const pmremGenerator = new PMREMGenerator(renderer);
-    const roomEnvironment = new RoomEnvironment();
-    this.defaultEnvironmentTarget = pmremGenerator.fromScene(roomEnvironment);
-    pmremGenerator.dispose();
+    this.defaultEnvironmentTarget = createRoomEnvironmentTarget(renderer);
 
     this.ambientLight = new AmbientLight(0xffffff, this.defaultAmbientIntensity);
     this.scene.add(this.ambientLight);
 
     this.hemisphereLight = new HemisphereLight(0xfff7ec, 0x6b737c, this.defaultHemisphereIntensity);
     this.scene.add(this.hemisphereLight);
+
     this.applyDefaultEnvironment();
   }
 
@@ -103,6 +102,16 @@ export class LightingRig {
     return this.hdriTexture !== null;
   }
 
+  useRenderer(renderer: WebGLRenderer | WebGPURenderer): void {
+    const previousTarget = this.defaultEnvironmentTarget;
+    this.defaultEnvironmentTarget = createRoomEnvironmentTarget(renderer);
+    previousTarget.dispose();
+
+    if (!this.hdriTexture) {
+      this.applyDefaultEnvironment();
+    }
+  }
+
   private loadHdriTexture(name: string, url: string): Promise<Texture> {
     if (name.toLowerCase().endsWith(".exr")) {
       return this.exrLoader.loadAsync(url);
@@ -153,4 +162,18 @@ export class LightingRig {
     this.hdriTexture.dispose();
     this.hdriTexture = null;
   }
+}
+
+function createRoomEnvironmentTarget(renderer: WebGLRenderer | WebGPURenderer): RenderTarget {
+  const pmremGenerator = isWebGpuRenderer(renderer)
+    ? new WebGPUPMREMGenerator(renderer)
+    : new WebGLPMREMGenerator(renderer);
+  const roomEnvironment = new RoomEnvironment();
+  const target = pmremGenerator.fromScene(roomEnvironment);
+  pmremGenerator.dispose();
+  return target;
+}
+
+function isWebGpuRenderer(renderer: WebGLRenderer | WebGPURenderer): renderer is WebGPURenderer {
+  return (renderer as WebGPURenderer).isWebGPURenderer === true;
 }

@@ -90,6 +90,7 @@ export class ThreeViewport {
       beforeSwitch: () => this.navigation.removeGameNavigationHandlers(),
       afterSwitch: () => this.navigation.installGameNavigationHandlers(),
       onWebGpuActive: () => {
+        this.lighting.useRenderer(this.ctx.renderer as WebGPURenderer);
         this.splatRenderer?.dispose();
         this.splatRenderer = null;
       },

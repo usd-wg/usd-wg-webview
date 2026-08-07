@@ -4,7 +4,7 @@ import { waitForUiPaint } from "./automation";
 import { renderAttributes } from "./attributesPanel";
 import { renderSceneGraph } from "./sceneGraphPanel";
 import { setStatus } from "./statusBar";
-import { collectRendererStats, renderStageSummary } from "./summaries";
+import { assetLabel, collectRendererStats, renderStageSummary } from "./summaries";
 
 // Uniform stage-edit refresh: every composition-changing edit (variant
 // selection, payload load/unload) funnels through the unified stage driver.
@@ -23,6 +23,7 @@ export async function applyStageEdit(
   const renderables = runtime.refreshAfterStageEdit(state.animCurrent);
   state.viewport.updateRenderables(renderables, true);
   state.viewport.renderGaussianSplats(runtime.extractGaussianSplats());
+  await refreshStageEnvironment();
   if (renderables.length > 0) {
     await state.viewport.updateRenderablesAsync(renderables);
   }
@@ -48,5 +49,47 @@ export async function applyStageEdit(
       attrPrimPath.textContent = "";
     }
   }
-  setStatus("Ready", false);
+  setStatus(
+    state.currentStageSummary?.environment?.warning
+      ? "Ready - DomeLight display-compensated"
+      : "Ready",
+    false
+  );
+}
+
+async function refreshStageEnvironment(): Promise<void> {
+  const environment = runtime.extractStageEnvironment();
+  if (!environment) {
+    state.lightingMode = "default";
+    state.hdriMapLabel = null;
+    if (state.currentStageSummary) {
+      delete state.currentStageSummary.environment;
+    }
+    state.viewport.useDefaultLighting();
+    return;
+  }
+
+  state.hdriIntensity = environment.intensity ?? 1;
+  state.hdriMapLabel = assetLabel(environment.texture.path);
+  state.lightingMode = "hdri";
+  if (environment.warning) {
+    console.warn("[USD WebView] Stage environment lighting was display-compensated", environment);
+  }
+  if (state.currentStageSummary) {
+    state.currentStageSummary.environment = environment;
+  }
+  try {
+    await state.viewport.loadHdriAsset(environment.texture, state.hdriMapLabel);
+    state.viewport.setHdriIntensity(state.hdriIntensity);
+    state.viewport.setHdriMapVisible(state.hdriMapVisible);
+  } catch (error) {
+    state.lightingMode = "default";
+    state.hdriMapLabel = null;
+    state.viewport.useDefaultLighting();
+    console.warn("Failed to refresh stage dome-light environment", {
+      sourcePath: environment.sourcePath,
+      texturePath: environment.texture.path,
+      error,
+    });
+  }
 }

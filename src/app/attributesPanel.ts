@@ -32,6 +32,17 @@ export function renderAttributes(primPath: string, attrs: PrimAttribute[]): void
 
 function renderAttributeValue(attr: PrimAttribute): string {
   const value = attr.value ?? "—";
+  if (attr.editable && !attr.valueIsArray) {
+    if (attr.typeName === "bool") {
+      const checked = value === "1" || value === "true" ? " checked" : "";
+      return `<input class="attr-edit attr-edit-bool" type="checkbox" data-attr="${escHtml(attr.name)}"${checked} />`;
+    }
+    const inputType = attr.typeName === "float" || attr.typeName === "double" || attr.typeName === "int"
+      ? "number"
+      : "text";
+    const step = attr.typeName === "int" ? "1" : "any";
+    return `<input class="attr-edit" type="${inputType}" step="${step}" data-attr="${escHtml(attr.name)}" value="${escHtml(value)}" />`;
+  }
   if (!attr.valueIsArray) {
     return `<span class="attr-value">${escHtml(value)}</span>`;
   }
@@ -50,6 +61,21 @@ function renderAttributeValue(attr: PrimAttribute): string {
 }
 
 attrList.addEventListener("change", (e) => {
+  const input = (e.target as Element).closest<HTMLInputElement>(".attr-edit");
+  if (input) {
+    const primPath = attrPrimPath.textContent;
+    const attrName = input.dataset.attr;
+    if (!primPath || !attrName) return;
+    const value = input.type === "checkbox" ? String(input.checked) : input.value;
+    const changed = runtime.setPrimAttribute(primPath, attrName, value);
+    if (!changed) {
+      renderAttributes(primPath, runtime.getPrimAttributes(primPath));
+      return;
+    }
+    void applyStageEdit(primPath, "updating attribute...");
+    return;
+  }
+
   const select = (e.target as Element).closest<HTMLSelectElement>(".attr-variant-select");
   if (!select) return;
   const changed = runtime.setVariantSelection(select.dataset.primpath!, select.dataset.variantset!, select.value);

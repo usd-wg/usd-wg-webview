@@ -533,6 +533,31 @@ GetSceneGraph(const std::string& path)
     return result;
 }
 
+bool
+_IsEditableScalarAttribute(const UsdAttribute& attr)
+{
+    if (!attr || attr.ValueMightBeTimeVarying()) {
+        return false;
+    }
+
+    const std::string name = attr.GetName().GetString();
+    if (name != "inputs:intensity" &&
+        name != "inputs:exposure" &&
+        name != "inputs:diffuse" &&
+        name != "inputs:specular" &&
+        name != "inputs:normalize" &&
+        name != "inputs:enableColorTemperature" &&
+        name != "inputs:colorTemperature") {
+        return false;
+    }
+
+    const SdfValueTypeName typeName = attr.GetTypeName();
+    return typeName == SdfValueTypeNames->Float ||
+        typeName == SdfValueTypeNames->Double ||
+        typeName == SdfValueTypeNames->Int ||
+        typeName == SdfValueTypeNames->Bool;
+}
+
 emscripten::val
 GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
 {
@@ -553,6 +578,7 @@ GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
         item.set("name", attr.GetName().GetString());
         item.set("typeName", attr.GetTypeName().GetAsToken().GetString());
         item.set("isAuthored", attr.IsAuthored());
+        item.set("editable", static_cast<bool>(UsdLuxLightAPI(prim)) && _IsEditableScalarAttribute(attr));
 
         VtValue value;
         if (attr.Get(&value)) {
@@ -598,6 +624,76 @@ GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
     }
 
     return result;
+}
+
+emscripten::val
+ExtractStageEnvironment(const std::string& stagePath)
+{
+    UsdStageRefPtr stage = _GetOrOpenStage(stagePath);
+    return _ExtractStageEnvironment(stage);
+}
+
+bool
+_SetAttributeFromString(const UsdAttribute& attr, const std::string& value)
+{
+    const SdfValueTypeName typeName = attr.GetTypeName();
+    try {
+        if (typeName == SdfValueTypeNames->Float) {
+            attr.Set(std::stof(value));
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Double) {
+            attr.Set(std::stod(value));
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Int) {
+            attr.Set(std::stoi(value));
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Bool) {
+            const std::string lower = TfStringToLower(value);
+            attr.Set(lower == "1" || lower == "true" || lower == "yes" || lower == "on");
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->String) {
+            attr.Set(value);
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Token) {
+            attr.Set(TfToken(value));
+            return true;
+        }
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+bool
+SetPrimAttribute(
+    const std::string& stagePath,
+    const std::string& primPath,
+    const std::string& attrName,
+    const std::string& value)
+{
+    UsdStageRefPtr stage = _GetOrOpenStage(stagePath);
+    if (!stage) return false;
+
+    UsdPrim prim = stage->GetPrimAtPath(SdfPath(primPath));
+    if (!prim || !UsdLuxLightAPI(prim)) return false;
+
+    UsdAttribute attr = prim.GetAttribute(TfToken(attrName));
+    if (!attr || !_IsEditableScalarAttribute(attr)) return false;
+
+    bool changed = false;
+    {
+        UsdEditContext ctx(stage, stage->GetSessionLayer());
+        changed = _SetAttributeFromString(attr, value);
+    }
+    if (!changed) return false;
+
+    _InvalidateDerivedStageCaches(stagePath);
+    return true;
 }
 
 bool

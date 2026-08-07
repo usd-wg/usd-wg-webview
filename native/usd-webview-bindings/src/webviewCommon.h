@@ -313,6 +313,12 @@ emscripten::val OpenStage(const std::string& path, bool loadAllPayloads = true);
 emscripten::val ExtractTransformsAtTime(const std::string& path, double timeCode);
 emscripten::val GetSceneGraph(const std::string& path);
 emscripten::val GetPrimAttributes(const std::string& stagePath, const std::string& primPath);
+bool SetPrimAttribute(
+    const std::string& stagePath,
+    const std::string& primPath,
+    const std::string& attrName,
+    const std::string& value);
+emscripten::val ExtractStageEnvironment(const std::string& stagePath);
 bool ReopenStage(const std::string& stagePath);
 bool SetVariantSelection(
     const std::string& stagePath,

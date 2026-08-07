@@ -84,8 +84,12 @@ export async function loadFiles(files: File[]): Promise<void> {
     state.hdriIntensity = environment.intensity ?? 1;
     state.hdriMapLabel = assetLabel(environment.texture.path);
     state.lightingMode = "hdri";
+    if (environment.warning) {
+      console.warn("[USD WebView] Stage environment lighting was display-compensated", environment);
+    }
     try {
       await state.viewport.loadHdriAsset(environment.texture, state.hdriMapLabel);
+      state.viewport.setHdriIntensity(state.hdriIntensity);
     } catch (error) {
       state.lightingMode = "default";
       state.hdriMapLabel = null;
@@ -145,7 +149,10 @@ export async function loadFiles(files: File[]): Promise<void> {
     state.isLoadingStage = false;
     const stageFailed = !!result.summary?.error;
     const inferredCount = result.diagnostics?.inferredBindingCount ?? 0;
-    const readyMessage = inferredCount > 0
+    const lightingWarning = !!result.summary?.environment?.warning;
+    const readyMessage = lightingWarning
+      ? "Ready - DomeLight display-compensated"
+      : inferredCount > 0
       ? `Ready — skeleton bindings were inferred (${inferredCount})`
       : "Ready";
     setStatus(stageFailed ? "Stage load failed" : readyMessage, false);

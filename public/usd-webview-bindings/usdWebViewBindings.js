@@ -1,5 +1,5 @@
-const _wasmBuildId = "wasm-2227e8d0bf33"; // stamped by tools/native-build/stamp-build.mjs
-const _wrapperBuildId = "wasm-2227e8d0bf33";
+const _wasmBuildId = "wasm-9b2fd5dbd95d"; // stamped by tools/native-build/stamp-build.mjs
+const _wrapperBuildId = "wasm-9b2fd5dbd95d";
 
 function normalizePath(path) {
   return `/${String(path).replace(/^\/+/, "")}`;
@@ -194,6 +194,12 @@ window.UsdWebViewBindings = {
       },
       getPrimAttributes(stagePath, primPath) {
         return module.GetPrimAttributes(normalizePath(stagePath), primPath);
+      },
+      setPrimAttribute(stagePath, primPath, attrName, value) {
+        return module.SetPrimAttribute(normalizePath(stagePath), primPath, attrName, value);
+      },
+      extractStageEnvironment(stagePath) {
+        return module.ExtractStageEnvironment(normalizePath(stagePath));
       },
       setPayloadLoaded(stagePath, primPath, loaded) {
         return module.SetPayloadLoaded(normalizePath(stagePath), primPath, loaded);
