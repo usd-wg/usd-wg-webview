@@ -36,6 +36,11 @@ export type StageSummary = {
 export type StageEnvironment = {
   sourcePath?: string;
   intensity?: number;
+  authoredIntensity?: number;
+  authoredExposure?: number;
+  viewportCompensation?: number;
+  rotation?: number;
+  warning?: string;
   texture: RenderableTexture;
 };
 
@@ -132,7 +137,44 @@ export type StageLoadResult = {
   summary: StageSummary | null;
   renderables?: RenderableMesh[];
   gaussianSplats?: RenderableGaussianSplat[];
+  lights?: RenderableLight[];
   diagnostics?: StageLoadDiagnostics;
+};
+
+export type RenderableLightKind =
+  | "distant"
+  | "sphere"
+  | "rect"
+  | "disk"
+  | "cylinder"
+  | "unsupported";
+
+export type RenderableLight = {
+  path: string;
+  name: string;
+  typeName: string;
+  kind: RenderableLightKind;
+  supported: boolean;
+  matrix: number[];
+  color: number[];
+  intensity: number;
+  exposure: number;
+  effectiveIntensity: number;
+  diffuse?: number;
+  specular?: number;
+  normalize?: boolean;
+  enableColorTemperature?: boolean;
+  colorTemperature?: number;
+  shadowEnable?: boolean;
+  coneAngle?: number;
+  coneSoftness?: number;
+  angle?: number;
+  radius?: number;
+  width?: number;
+  height?: number;
+  length?: number;
+  treatAsPoint?: boolean;
+  warning?: string;
 };
 
 // --- Unified stage driver contract (v2) ---
@@ -218,6 +260,7 @@ export type PrimAttribute = {
   value?: string;
   valueIsArray?: boolean;
   valueElementCount?: number;
+  editable?: boolean;
   variantOptions?: string[]; // defined when typeName === "variantSet"
 };
 
@@ -232,10 +275,13 @@ export type UsdWebViewBindings = {
   getLastSkelBindingOverlayContents?: (stagePath: string) => string;
   getSceneGraph?: (stagePath: string) => SceneGraphPrim[];
   getPrimAttributes?: (stagePath: string, primPath: string) => PrimAttribute[];
+  setPrimAttribute?: (stagePath: string, primPath: string, attrName: string, value: string) => boolean;
   setVariantSelection?: (stagePath: string, primPath: string, variantSetName: string, selection: string) => boolean;
   setPayloadLoaded?: (stagePath: string, primPath: string, loaded: boolean) => boolean;
   setAllPayloadsLoaded?: (stagePath: string, loaded: boolean) => void;
   extractGaussianSplats?: (stagePath: string) => RenderableGaussianSplat[];
+  extractStageEnvironment?: (stagePath: string) => StageEnvironment | undefined;
+  extractStageLights?: (stagePath: string, timeCode?: number) => RenderableLight[];
   // Unified stage driver (contract v2)
   createStageDriver?: (stagePath: string) => boolean;
   deleteStageDriver?: (stagePath: string) => void;

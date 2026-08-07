@@ -74,6 +74,7 @@ export async function loadFiles(files: File[]): Promise<void> {
   renderRuntimeStatus(runtime.status);
   const gaussianSplats = result.gaussianSplats ?? [];
   const renderables = result.renderables ?? [];
+  const lights = result.lights ?? [];
   setStageHasGaussianSplats(gaussianSplats.length > 0);
   await state.viewport.prepareForRenderables(renderables);
   if (loadSerial !== state.stageLoadSerial) {
@@ -86,10 +87,14 @@ export async function loadFiles(files: File[]): Promise<void> {
     state.lightingMode = "hdri";
     try {
       await state.viewport.loadHdriAsset(environment.texture, state.hdriMapLabel);
+      state.viewport.setHdriIntensity(state.hdriIntensity);
+      state.viewport.setHdriRotation(environment.rotation ?? 0);
+      state.viewport.setHdriMapVisible(state.hdriMapVisible);
     } catch (error) {
       state.lightingMode = "default";
       state.hdriMapLabel = null;
       state.viewport.useDefaultLighting();
+      state.viewport.setHdriRotation(0);
       console.warn("Failed to load stage dome-light environment", {
         sourcePath: environment.sourcePath,
         texturePath: environment.texture.path,
@@ -97,8 +102,15 @@ export async function loadFiles(files: File[]): Promise<void> {
       });
     }
     applyLightingOptions();
+  } else {
+    state.lightingMode = "default";
+    state.hdriMapLabel = null;
+    state.viewport.useDefaultLighting();
+    state.viewport.setHdriRotation(0);
+    applyLightingOptions();
   }
   state.viewport.renderStage(renderables, result.summary, gaussianSplats.length > 0);
+  state.viewport.setStageLights(lights);
   state.viewport.renderGaussianSplats(gaussianSplats);
   state.currentRendererStats = collectRendererStats(renderables, gaussianSplats);
   renderStageSummary(state.currentStageSummary);
@@ -137,6 +149,11 @@ export async function loadFiles(files: File[]): Promise<void> {
     await state.viewport.updateRenderablesAsync(renderables);
     if (loadSerial !== state.stageLoadSerial) {
       return;
+    }
+    if (state.currentStageSummary?.environment && state.lightingMode === "hdri") {
+      state.viewport.setHdriIntensity(state.hdriIntensity);
+      state.viewport.setHdriRotation(state.currentStageSummary.environment.rotation ?? 0);
+      state.viewport.setHdriMapVisible(state.hdriMapVisible);
     }
     state.currentRendererStats = collectRendererStats(renderables, gaussianSplats);
     renderStageSummary(state.currentStageSummary);

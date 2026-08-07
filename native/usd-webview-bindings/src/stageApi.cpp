@@ -14,6 +14,13 @@ _CountPrims(const UsdStageRefPtr& stage)
     return count;
 }
 
+bool
+_IsDomeLightPrim(const UsdPrim& prim)
+{
+    return static_cast<bool>(UsdLuxDomeLight(prim)) ||
+           static_cast<bool>(UsdLuxDomeLight_1(prim));
+}
+
 struct StageAuthoredStats
 {
     int meshPrimCount = 0;
@@ -533,6 +540,51 @@ GetSceneGraph(const std::string& path)
     return result;
 }
 
+bool
+_IsEditableScalarAttribute(const UsdPrim& prim, const UsdAttribute& attr)
+{
+    if (!attr || attr.ValueMightBeTimeVarying()) {
+        return false;
+    }
+
+    const std::string name = attr.GetName().GetString();
+    const SdfValueTypeName typeName = attr.GetTypeName();
+    if (_IsDomeLightPrim(prim)) {
+        const bool editableDomeName =
+            name == "inputs:intensity" ||
+            name == "inputs:exposure" ||
+            name == "inputs:texture:rotation";
+        return editableDomeName &&
+            (typeName == SdfValueTypeNames->Float ||
+             typeName == SdfValueTypeNames->Double ||
+             typeName == SdfValueTypeNames->Int);
+    }
+
+    if (name == "inputs:color") {
+        return typeName == SdfValueTypeNames->Color3f;
+    }
+
+    const bool editableName =
+        name == "inputs:intensity" ||
+        name == "inputs:exposure" ||
+        name == "inputs:diffuse" ||
+        name == "inputs:specular" ||
+        name == "inputs:normalize" ||
+        name == "inputs:enableColorTemperature" ||
+        name == "inputs:colorTemperature" ||
+        name == "inputs:radius" ||
+        name == "inputs:width" ||
+        name == "inputs:height" ||
+        name == "inputs:angle" ||
+        name == "inputs:shaping:cone:angle" ||
+        name == "inputs:shaping:cone:softness";
+    return editableName &&
+        (typeName == SdfValueTypeNames->Float ||
+         typeName == SdfValueTypeNames->Double ||
+         typeName == SdfValueTypeNames->Int ||
+         typeName == SdfValueTypeNames->Bool);
+}
+
 emscripten::val
 GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
 {
@@ -553,6 +605,7 @@ GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
         item.set("name", attr.GetName().GetString());
         item.set("typeName", attr.GetTypeName().GetAsToken().GetString());
         item.set("isAuthored", attr.IsAuthored());
+        item.set("editable", static_cast<bool>(UsdLuxLightAPI(prim)) && _IsEditableScalarAttribute(prim, attr));
 
         VtValue value;
         if (attr.Get(&value)) {
@@ -577,6 +630,16 @@ GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
         result.set(index++, item);
     }
 
+    if (_IsDomeLightPrim(prim) && !prim.HasAttribute(TfToken("inputs:texture:rotation"))) {
+        emscripten::val item = emscripten::val::object();
+        item.set("name", std::string("inputs:texture:rotation"));
+        item.set("typeName", std::string("float"));
+        item.set("isAuthored", false);
+        item.set("editable", true);
+        item.set("value", std::string("0"));
+        result.set(index++, item);
+    }
+
     // Append variant sets as pseudo-attributes at the end
     const UsdVariantSets variantSets = prim.GetVariantSets();
     for (const std::string& vsName : variantSets.GetNames()) {
@@ -598,6 +661,97 @@ GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
     }
 
     return result;
+}
+
+emscripten::val
+ExtractStageEnvironment(const std::string& stagePath)
+{
+    UsdStageRefPtr stage = _GetOrOpenStage(stagePath);
+    return _ExtractStageEnvironment(stage);
+}
+
+bool
+_SetAttributeFromString(const UsdAttribute& attr, const std::string& value)
+{
+    const SdfValueTypeName typeName = attr.GetTypeName();
+    try {
+        if (typeName == SdfValueTypeNames->Float) {
+            attr.Set(std::stof(value));
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Double) {
+            attr.Set(std::stod(value));
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Int) {
+            attr.Set(std::stoi(value));
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Bool) {
+            const std::string lower = TfStringToLower(value);
+            attr.Set(lower == "1" || lower == "true" || lower == "yes" || lower == "on");
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->String) {
+            attr.Set(value);
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Token) {
+            attr.Set(TfToken(value));
+            return true;
+        }
+        if (typeName == SdfValueTypeNames->Color3f) {
+            std::string normalized = value;
+            for (char& ch : normalized) {
+                if (ch == '(' || ch == ')' || ch == ',') {
+                    ch = ' ';
+                }
+            }
+            std::istringstream input(normalized);
+            float r = 0.0f;
+            float g = 0.0f;
+            float b = 0.0f;
+            if (!(input >> r >> g >> b)) {
+                return false;
+            }
+            attr.Set(GfVec3f(r, g, b));
+            return true;
+        }
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+bool
+SetPrimAttribute(
+    const std::string& stagePath,
+    const std::string& primPath,
+    const std::string& attrName,
+    const std::string& value)
+{
+    UsdStageRefPtr stage = _GetOrOpenStage(stagePath);
+    if (!stage) return false;
+
+    UsdPrim prim = stage->GetPrimAtPath(SdfPath(primPath));
+    if (!prim || !UsdLuxLightAPI(prim)) return false;
+
+    UsdAttribute attr = prim.GetAttribute(TfToken(attrName));
+    if (!attr && _IsDomeLightPrim(prim) && attrName == "inputs:texture:rotation") {
+        UsdEditContext ctx(stage, stage->GetSessionLayer());
+        attr = prim.CreateAttribute(TfToken(attrName), SdfValueTypeNames->Float);
+    }
+    if (!attr || !_IsEditableScalarAttribute(prim, attr)) return false;
+
+    bool changed = false;
+    {
+        UsdEditContext ctx(stage, stage->GetSessionLayer());
+        changed = _SetAttributeFromString(attr, value);
+    }
+    if (!changed) return false;
+
+    _InvalidateDerivedStageCaches(stagePath);
+    return true;
 }
 
 bool

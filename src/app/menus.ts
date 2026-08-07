@@ -202,6 +202,8 @@ export function applyLightingOptions(): void {
   }
   app.querySelector<HTMLButtonElement>("#menuHdriVisible")
     ?.classList.toggle("menu-option--checked", state.hdriMapVisible);
+  app.querySelector<HTMLButtonElement>("#menuLightGizmos")
+    ?.classList.toggle("menu-option--checked", state.lightGizmosVisible);
   const loadButton = app.querySelector<HTMLButtonElement>("#menuLoadHdriMap");
   if (loadButton) {
     loadButton.classList.toggle("menu-option--checked", state.lightingMode === "hdri");
@@ -230,6 +232,8 @@ export function syncViewportState(target: ThreeViewport): void {
   }
   target.setHdriMapVisible(state.hdriMapVisible);
   target.setHdriIntensity(state.hdriIntensity);
+  target.setHdriRotation(state.currentStageSummary?.environment?.rotation ?? 0);
+  target.setLightGizmosVisible(state.lightGizmosVisible);
 }
 
 export function replaceViewport(): void {
@@ -324,6 +328,12 @@ for (const button of app.querySelectorAll<HTMLButtonElement>("[data-lighting-mod
 app.querySelector("#menuHdriVisible")?.addEventListener("click", () => {
   state.hdriMapVisible = !state.hdriMapVisible;
   state.viewport.setHdriMapVisible(state.hdriMapVisible);
+  applyLightingOptions();
+});
+
+app.querySelector("#menuLightGizmos")?.addEventListener("click", () => {
+  state.lightGizmosVisible = !state.lightGizmosVisible;
+  state.viewport.setLightGizmosVisible(state.lightGizmosVisible);
   applyLightingOptions();
 });
 

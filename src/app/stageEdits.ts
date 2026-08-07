@@ -4,7 +4,7 @@ import { waitForUiPaint } from "./automation";
 import { renderAttributes } from "./attributesPanel";
 import { renderSceneGraph } from "./sceneGraphPanel";
 import { setStatus } from "./statusBar";
-import { collectRendererStats, renderStageSummary } from "./summaries";
+import { assetLabel, collectRendererStats, renderStageSummary } from "./summaries";
 
 // Uniform stage-edit refresh: every composition-changing edit (variant
 // selection, payload load/unload) funnels through the unified stage driver.
@@ -23,6 +23,8 @@ export async function applyStageEdit(
   const renderables = runtime.refreshAfterStageEdit(state.animCurrent);
   state.viewport.updateRenderables(renderables, true);
   state.viewport.renderGaussianSplats(runtime.extractGaussianSplats());
+  await refreshStageEnvironment();
+  state.viewport.setStageLights(runtime.extractStageLights(state.animCurrent));
   if (renderables.length > 0) {
     await state.viewport.updateRenderablesAsync(renderables);
   }
@@ -49,4 +51,50 @@ export async function applyStageEdit(
     }
   }
   setStatus("Ready", false);
+}
+
+export async function applyLightAttributeEdit(refreshAttributes = true): Promise<void> {
+  await refreshStageEnvironment();
+  state.viewport.setStageLights(runtime.extractStageLights(state.animCurrent));
+  if (refreshAttributes && state.selectedPrimPath) {
+    renderAttributes(state.selectedPrimPath, runtime.getPrimAttributes(state.selectedPrimPath));
+  }
+  setStatus("Ready", false);
+}
+
+async function refreshStageEnvironment(): Promise<void> {
+  const environment = runtime.extractStageEnvironment();
+  if (!environment) {
+    state.lightingMode = "default";
+    state.hdriMapLabel = null;
+    if (state.currentStageSummary) {
+      delete state.currentStageSummary.environment;
+    }
+    state.viewport.useDefaultLighting();
+    state.viewport.setHdriRotation(0);
+    return;
+  }
+
+  state.hdriIntensity = environment.intensity ?? 1;
+  state.hdriMapLabel = assetLabel(environment.texture.path);
+  state.lightingMode = "hdri";
+  if (state.currentStageSummary) {
+    state.currentStageSummary.environment = environment;
+  }
+  try {
+    await state.viewport.loadHdriAsset(environment.texture, state.hdriMapLabel);
+    state.viewport.setHdriIntensity(state.hdriIntensity);
+    state.viewport.setHdriRotation(environment.rotation ?? 0);
+    state.viewport.setHdriMapVisible(state.hdriMapVisible);
+  } catch (error) {
+    state.lightingMode = "default";
+    state.hdriMapLabel = null;
+    state.viewport.useDefaultLighting();
+    state.viewport.setHdriRotation(0);
+    console.warn("Failed to refresh stage dome-light environment", {
+      sourcePath: environment.sourcePath,
+      texturePath: environment.texture.path,
+      error,
+    });
+  }
 }

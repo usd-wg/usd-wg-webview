@@ -240,16 +240,17 @@ export class MaterialFactory {
   ): string | null {
     const normalizedUri = normalizeAssetPath(uri);
     const basePath = normalizeAssetPath(materialXPath).split("/").slice(0, -1).join("/");
-    const candidates = new Set([
-      normalizedUri,
-      basePath ? `${basePath}/${normalizedUri}` : normalizedUri,
-      normalizedUri.split("/").pop() ?? normalizedUri,
-    ]);
+    const candidates = assetPathCandidates(normalizedUri, basePath);
 
     const resource = resources.find((candidate) => {
       const path = normalizeAssetPath(candidate.path);
-      const basename = path.split("/").pop() ?? path;
-      return candidates.has(path) || candidates.has(basename);
+      const resourceCandidates = assetPathCandidates(path);
+      for (const resourceCandidate of resourceCandidates) {
+        if (candidates.has(resourceCandidate)) {
+          return true;
+        }
+      }
+      return false;
     });
     if (!resource?.data?.length) {
       return null;
@@ -309,6 +310,41 @@ export class MaterialFactory {
 
 function normalizeAssetPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
+}
+
+function assetPathCandidates(path: string, basePath = ""): Set<string> {
+  const candidates = new Set<string>();
+  const add = (candidate: string) => {
+    const normalized = normalizeAssetPath(candidate);
+    if (!normalized) {
+      return;
+    }
+    candidates.add(normalized);
+    candidates.add(normalized.split("/").pop() ?? normalized);
+
+    const packageMember = extractPackageMemberPath(normalized);
+    if (packageMember && packageMember !== normalized) {
+      candidates.add(packageMember);
+      candidates.add(packageMember.split("/").pop() ?? packageMember);
+    }
+  };
+
+  add(path);
+  if (basePath) {
+    add(`${basePath}/${path}`);
+  }
+
+  return candidates;
+}
+
+function extractPackageMemberPath(path: string): string | null {
+  const openBracket = path.indexOf("[");
+  const closeBracket = path.lastIndexOf("]");
+  if (openBracket === -1 || closeBracket <= openBracket) {
+    return null;
+  }
+
+  return normalizeAssetPath(path.slice(openBracket + 1, closeBracket));
 }
 
 function createDataUrl(bytes: Uint8Array, mimeType: string): string {

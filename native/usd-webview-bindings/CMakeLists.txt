@@ -20,6 +20,7 @@ endif()
 add_executable(usdWebViewBindingsModule
     src/bindings.cpp
     src/jsInterop.cpp
+    src/lights.cpp
     src/materials.cpp
     src/meshExtraction.cpp
     src/pointInstancer.cpp

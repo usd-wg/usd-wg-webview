@@ -488,6 +488,46 @@ input {
   white-space: nowrap;
 }
 
+.attr-edit {
+  min-width: 0;
+  width: min(180px, 100%);
+  height: 22px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 4px;
+  background: #10161a;
+  color: #edf0f2;
+  font: inherit;
+  padding: 2px 6px;
+}
+
+.attr-edit:focus {
+  outline: 1px solid #62c7ff;
+  outline-offset: 1px;
+}
+
+.attr-edit-bool {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.attr-color-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.attr-edit-color {
+  flex: 0 0 auto;
+  width: 32px;
+  padding: 1px;
+}
+
+.attr-edit-color-text {
+  width: min(140px, 100%);
+}
+
 .attr-value-array-shell {
   display: flex;
   align-items: center;
