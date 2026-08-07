@@ -511,6 +511,23 @@ input {
   padding: 0;
 }
 
+.attr-color-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.attr-edit-color {
+  flex: 0 0 auto;
+  width: 32px;
+  padding: 1px;
+}
+
+.attr-edit-color-text {
+  width: min(140px, 100%);
+}
+
 .attr-value-array-shell {
   display: flex;
   align-items: center;

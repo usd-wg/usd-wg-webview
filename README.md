@@ -29,6 +29,9 @@ required.
 - **Inspection UI** - scene graph, prim attributes, selection highlighting,
   payload and variant badges, stage summary, renderer stats, up-axis handling,
   and HDRI/default lighting controls.
+- **USDLux lights** - authored dome lights can drive HDRI environment lighting;
+  distant, sphere, rect, and disk lights are converted to viewport lights with
+  selectable gizmos and editable light attributes in the attributes panel.
 - **USD 26 compatibility** - works with older USDZ files that authored
   `material:binding` before `UsdShadeMaterialBindingAPI` became a formal
   applied-API schema.
@@ -40,6 +43,18 @@ required.
   combined mode; the status bar calls this out explicitly.
 - **MaterialX dependency** - `three` is pinned to a `bhouston/three.js` tarball
   until upstream Three.js has matching `MaterialXLoader` support.
+- **USDLux fidelity** - USDLux is translated to the light types available in
+  Three.js, not path-traced. WebGL and WebGPU have different area-light
+  behavior; see [Lighting](docs/lighting.md).
+
+## Light Gizmos
+
+Light gizmos are enabled from **Settings > Lighting > Light gizmos**. Click a
+light prim in the scene graph or click its wire gizmo in the viewport to select
+the USD light prim; the attributes panel then exposes editable light inputs such
+as intensity, exposure, color, temperature, radius, width, height, and shaping
+cone values. Press `F` to frame the selected light. Gizmos are selection aids,
+not transform manipulators.
 
 ## Architecture
 
@@ -101,5 +116,6 @@ Open the local URL printed by Vite. The WASM bindings must be built first — se
 ## Documentation
 
 - [Building](docs/building.md) — Prerequisites and build instructions for the WASM bindings and frontend
+- [Lighting](docs/lighting.md) — USDLux translation, WebGL/WebGPU behavior, gizmos, editable attributes, and limitations
 - [Material and Geometry Strategy](docs/material-geometry-strategy.md) — Unified stage-driver geometry, authored-material payloads, and known rendering constraints
 - [USD Material Fidelity](docs/usd-material-fidelity.md) — Local harness for USD-wrapping `material-fidelity` cases and validating the viewer translation boundary

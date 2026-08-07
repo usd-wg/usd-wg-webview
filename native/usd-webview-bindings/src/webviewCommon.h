@@ -84,7 +84,21 @@
 #include "pxr/usd/usdGeom/subset.h"
 #include "pxr/usd/usdGeom/tokens.h"
 #include "pxr/usd/usdGeom/xformCache.h"
+#include "pxr/usd/usdLux/cylinderLight.h"
+#include "pxr/usd/usdLux/diskLight.h"
+#include "pxr/usd/usdLux/distantLight.h"
 #include "pxr/usd/usdLux/domeLight.h"
+#include "pxr/usd/usdLux/domeLight_1.h"
+#include "pxr/usd/usdLux/geometryLight.h"
+#include "pxr/usd/usdLux/lightAPI.h"
+#include "pxr/usd/usdLux/meshLightAPI.h"
+#include "pxr/usd/usdLux/pluginLight.h"
+#include "pxr/usd/usdLux/portalLight.h"
+#include "pxr/usd/usdLux/rectLight.h"
+#include "pxr/usd/usdLux/shadowAPI.h"
+#include "pxr/usd/usdLux/shapingAPI.h"
+#include "pxr/usd/usdLux/sphereLight.h"
+#include "pxr/usd/usdLux/volumeLightAPI.h"
 #include "pxr/usd/usdShade/connectableAPI.h"
 #include "pxr/usd/usdShade/input.h"
 #include "pxr/usd/usdShade/material.h"
@@ -254,7 +268,7 @@ bool _GetMaterialXSourceAsset(
     TfToken* subIdentifier,
     TfToken* sourceTypeOut = nullptr);
 emscripten::val _ColorArray(const UsdGeomMesh& mesh);
-emscripten::val _ExtractStageEnvironment(const UsdStageRefPtr& stage);
+emscripten::val _ReadTextureAsset(const std::string& path, const std::string& packageRootPath);
 emscripten::val _ExtractMaterial(
     const UsdPrim& prim,
     const std::string& packageRootPath,
@@ -268,6 +282,11 @@ void _MaybeSetRenderableMaterialSubsets(
     const std::string& packageRootPath,
     UsdShadeMaterialBindingAPI::BindingsCache* bindingsCache,
     UsdShadeMaterialBindingAPI::CollectionQueryCache* collectionQueryCache);
+
+// --- lights.cpp -------------------------------------------------------------
+
+emscripten::val _ExtractStageEnvironment(const UsdStageRefPtr& stage);
+emscripten::val _ExtractStageLights(const UsdStageRefPtr& stage, UsdTimeCode timeCode);
 
 // --- meshExtraction.cpp -----------------------------------------------------
 
@@ -319,6 +338,7 @@ bool SetPrimAttribute(
     const std::string& attrName,
     const std::string& value);
 emscripten::val ExtractStageEnvironment(const std::string& stagePath);
+emscripten::val ExtractStageLights(const std::string& stagePath, double timeCode);
 bool ReopenStage(const std::string& stagePath);
 bool SetVariantSelection(
     const std::string& stagePath,

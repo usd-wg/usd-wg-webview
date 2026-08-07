@@ -39,6 +39,7 @@ export type StageEnvironment = {
   authoredIntensity?: number;
   authoredExposure?: number;
   viewportCompensation?: number;
+  rotation?: number;
   warning?: string;
   texture: RenderableTexture;
 };
@@ -136,7 +137,44 @@ export type StageLoadResult = {
   summary: StageSummary | null;
   renderables?: RenderableMesh[];
   gaussianSplats?: RenderableGaussianSplat[];
+  lights?: RenderableLight[];
   diagnostics?: StageLoadDiagnostics;
+};
+
+export type RenderableLightKind =
+  | "distant"
+  | "sphere"
+  | "rect"
+  | "disk"
+  | "cylinder"
+  | "unsupported";
+
+export type RenderableLight = {
+  path: string;
+  name: string;
+  typeName: string;
+  kind: RenderableLightKind;
+  supported: boolean;
+  matrix: number[];
+  color: number[];
+  intensity: number;
+  exposure: number;
+  effectiveIntensity: number;
+  diffuse?: number;
+  specular?: number;
+  normalize?: boolean;
+  enableColorTemperature?: boolean;
+  colorTemperature?: number;
+  shadowEnable?: boolean;
+  coneAngle?: number;
+  coneSoftness?: number;
+  angle?: number;
+  radius?: number;
+  width?: number;
+  height?: number;
+  length?: number;
+  treatAsPoint?: boolean;
+  warning?: string;
 };
 
 // --- Unified stage driver contract (v2) ---
@@ -243,6 +281,7 @@ export type UsdWebViewBindings = {
   setAllPayloadsLoaded?: (stagePath: string, loaded: boolean) => void;
   extractGaussianSplats?: (stagePath: string) => RenderableGaussianSplat[];
   extractStageEnvironment?: (stagePath: string) => StageEnvironment | undefined;
+  extractStageLights?: (stagePath: string, timeCode?: number) => RenderableLight[];
   // Unified stage driver (contract v2)
   createStageDriver?: (stagePath: string) => boolean;
   deleteStageDriver?: (stagePath: string) => void;

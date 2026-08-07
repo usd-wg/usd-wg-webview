@@ -55,6 +55,7 @@ export function sampleAnimationFrame(timeCode: number): void {
   if (renderables.length > 0) {
     state.viewport.updateRenderablesPartial(renderables);
   }
+  state.viewport.setStageLights(runtime.extractStageLights(timeCode));
 }
 
 export function onTick(): void {

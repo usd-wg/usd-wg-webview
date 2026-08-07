@@ -29,6 +29,7 @@ EMSCRIPTEN_BINDINGS(usdWebViewBindings)
     emscripten::function("GetPrimAttributes", &GetPrimAttributes);
     emscripten::function("SetPrimAttribute", &SetPrimAttribute);
     emscripten::function("ExtractStageEnvironment", &ExtractStageEnvironment);
+    emscripten::function("ExtractStageLights", &ExtractStageLights);
     emscripten::function("ReopenStage", &ReopenStage);
     emscripten::function("SetVariantSelection", &SetVariantSelection);
     emscripten::function("SetPayloadLoaded", &SetPayloadLoaded);

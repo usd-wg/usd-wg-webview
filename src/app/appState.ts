@@ -62,6 +62,7 @@ export const state = {
   toneMappingChoice: "none" as ToneMappingChoice,
   toneMappingExposure: 1,
   lightingMode: "default" as LightingMode,
+  lightGizmosVisible: true,
   materialXFlipV: true,
   purposePolicy: "defaultRender" as PurposeChoice,
   hdriMapVisible: true,

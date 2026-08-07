@@ -90,6 +90,7 @@ app.innerHTML = `
             <button class="menu-option menu-submenu-trigger">Lighting</button>
             <ul class="menu-dropdown menu-submenu-dropdown">
               <li><button class="menu-option" data-lighting-mode="default">Default lighting</button></li>
+              <li><button class="menu-option" id="menuLightGizmos">Light gizmos</button></li>
               <li class="menu-submenu">
                 <button class="menu-option menu-submenu-trigger">HDR</button>
                 <ul class="menu-dropdown menu-submenu-dropdown">

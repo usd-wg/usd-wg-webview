@@ -3,6 +3,7 @@ import type {
   MeshUpdate,
   PrimAttribute,
   RenderableGaussianSplat,
+  RenderableLight,
   RenderableMaterial,
   RenderableMesh,
   RenderableTexture,
@@ -129,6 +130,7 @@ export class UsdWebViewRuntime {
 
     this.currentStagePath = rootPath;
     const gaussianSplats = this.bindings.extractGaussianSplats?.(rootPath) ?? [];
+    const lights = this.bindings.extractStageLights?.(rootPath, normalizedSummary.startTimeCode ?? 0) ?? [];
 
     this.hasStageDriver = this.bindings.createStageDriver?.(rootPath) ?? false;
     let renderables: RenderableMesh[] = [];
@@ -140,7 +142,7 @@ export class UsdWebViewRuntime {
       diagnostics = this.bindings.stageDriverGetDiagnostics?.(rootPath);
     }
 
-    return { summary: normalizedSummary, renderables, gaussianSplats, diagnostics };
+    return { summary: normalizedSummary, renderables, gaussianSplats, lights, diagnostics };
   }
 
   // Draw the stage through the unified driver and resolve material payloads
@@ -272,6 +274,11 @@ export class UsdWebViewRuntime {
   extractStageEnvironment() {
     if (!this.bindings?.extractStageEnvironment || !this.currentStagePath) return undefined;
     return this.bindings.extractStageEnvironment(this.currentStagePath);
+  }
+
+  extractStageLights(timeCode = 0): RenderableLight[] {
+    if (!this.bindings?.extractStageLights || !this.currentStagePath) return [];
+    return this.bindings.extractStageLights(this.currentStagePath, timeCode);
   }
 
   getSkelDebugInfo(primPath: string, timeA = 0, timeB = 60): unknown {

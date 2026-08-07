@@ -23,7 +23,7 @@ import {
 import type { WebGPURenderer } from "three/webgpu";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
-import type { PrimTransform, RenderableMesh, RenderableGaussianSplat, RenderableTexture, StageSummary } from "../usd/types";
+import type { PrimTransform, RenderableMesh, RenderableGaussianSplat, RenderableLight, RenderableTexture, StageSummary } from "../usd/types";
 import { GaussianSplatRenderer, type SplatViewOptions } from "./GaussianSplatRenderer";
 import {
   applyGeometryGroups,
@@ -193,6 +193,14 @@ export class ThreeViewport {
     }
   }
 
+  setStageLights(lights: RenderableLight[]): void {
+    this.lighting.setStageLights(lights);
+  }
+
+  setLightGizmosVisible(visible: boolean): void {
+    this.lighting.setLightGizmosVisible(visible);
+  }
+
   isExperimentalMaterialXMode(): boolean {
     return this.materials.isExperimentalMaterialXMode();
   }
@@ -263,6 +271,10 @@ export class ThreeViewport {
 
   setHdriIntensity(intensity: number): void {
     this.lighting.setHdriIntensity(intensity);
+  }
+
+  setHdriRotation(degrees: number): void {
+    this.lighting.setHdriRotation(degrees);
   }
 
   hasHdriMap(): boolean {
@@ -471,6 +483,7 @@ export class ThreeViewport {
     this.picking.clearStageState();
     this.textures.revokeTextureUrls();
     this.materials.clearStageState();
+    this.lighting.clearStageLights();
     this.stageRoot.rotation.set(0, 0, 0);
     this.stageRoot.traverse((object) => {
       if (object instanceof Mesh) {
@@ -489,21 +502,32 @@ export class ThreeViewport {
 
   private applyViewUpAxis(): void {
     this.stageRoot.rotation.set(this.viewUpAxis === "z" ? -Math.PI / 2 : 0, 0, 0);
+    this.lighting.setViewUpAxis(this.viewUpAxis);
     this.splatRenderer?.setViewUpAxis(this.viewUpAxis);
   }
 
   pickPrim(clientX: number, clientY: number): string | null {
+    const lightPath = this.lighting.pickLight(clientX, clientY, this.ctx.host, this.ctx.camera);
+    if (lightPath) {
+      return lightPath;
+    }
     return this.picking.pickPrim(clientX, clientY);
   }
 
   setSelectedPrim(primPath: string | null): void {
     this.picking.setSelectedPrim(primPath);
+    this.lighting.setSelectedLight(primPath);
   }
 
   framePrim(primPath: string): void {
     const instanceBox = this.picking.getSelectedInstanceBox(primPath);
     if (instanceBox) {
       this.navigation.animateToBox(instanceBox, true);
+      return;
+    }
+    const lightBox = this.lighting.getLightBox(primPath);
+    if (lightBox) {
+      this.navigation.animateToBox(lightBox, true);
       return;
     }
     const box = new Box3();

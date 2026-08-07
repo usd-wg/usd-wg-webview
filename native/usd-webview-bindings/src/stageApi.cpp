@@ -534,28 +534,48 @@ GetSceneGraph(const std::string& path)
 }
 
 bool
-_IsEditableScalarAttribute(const UsdAttribute& attr)
+_IsEditableScalarAttribute(const UsdPrim& prim, const UsdAttribute& attr)
 {
     if (!attr || attr.ValueMightBeTimeVarying()) {
         return false;
     }
 
     const std::string name = attr.GetName().GetString();
-    if (name != "inputs:intensity" &&
-        name != "inputs:exposure" &&
-        name != "inputs:diffuse" &&
-        name != "inputs:specular" &&
-        name != "inputs:normalize" &&
-        name != "inputs:enableColorTemperature" &&
-        name != "inputs:colorTemperature") {
-        return false;
+    const SdfValueTypeName typeName = attr.GetTypeName();
+    if (UsdLuxDomeLight(prim)) {
+        const bool editableDomeName =
+            name == "inputs:intensity" ||
+            name == "inputs:exposure" ||
+            name == "inputs:texture:rotation";
+        return editableDomeName &&
+            (typeName == SdfValueTypeNames->Float ||
+             typeName == SdfValueTypeNames->Double ||
+             typeName == SdfValueTypeNames->Int);
     }
 
-    const SdfValueTypeName typeName = attr.GetTypeName();
-    return typeName == SdfValueTypeNames->Float ||
-        typeName == SdfValueTypeNames->Double ||
-        typeName == SdfValueTypeNames->Int ||
-        typeName == SdfValueTypeNames->Bool;
+    if (name == "inputs:color") {
+        return typeName == SdfValueTypeNames->Color3f;
+    }
+
+    const bool editableName =
+        name == "inputs:intensity" ||
+        name == "inputs:exposure" ||
+        name == "inputs:diffuse" ||
+        name == "inputs:specular" ||
+        name == "inputs:normalize" ||
+        name == "inputs:enableColorTemperature" ||
+        name == "inputs:colorTemperature" ||
+        name == "inputs:radius" ||
+        name == "inputs:width" ||
+        name == "inputs:height" ||
+        name == "inputs:angle" ||
+        name == "inputs:shaping:cone:angle" ||
+        name == "inputs:shaping:cone:softness";
+    return editableName &&
+        (typeName == SdfValueTypeNames->Float ||
+         typeName == SdfValueTypeNames->Double ||
+         typeName == SdfValueTypeNames->Int ||
+         typeName == SdfValueTypeNames->Bool);
 }
 
 emscripten::val
@@ -578,7 +598,7 @@ GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
         item.set("name", attr.GetName().GetString());
         item.set("typeName", attr.GetTypeName().GetAsToken().GetString());
         item.set("isAuthored", attr.IsAuthored());
-        item.set("editable", static_cast<bool>(UsdLuxLightAPI(prim)) && _IsEditableScalarAttribute(attr));
+        item.set("editable", static_cast<bool>(UsdLuxLightAPI(prim)) && _IsEditableScalarAttribute(prim, attr));
 
         VtValue value;
         if (attr.Get(&value)) {
@@ -600,6 +620,16 @@ GetPrimAttributes(const std::string& stagePath, const std::string& primPath)
             item.set("value", str);
         }
 
+        result.set(index++, item);
+    }
+
+    if (UsdLuxDomeLight(prim) && !prim.HasAttribute(TfToken("inputs:texture:rotation"))) {
+        emscripten::val item = emscripten::val::object();
+        item.set("name", std::string("inputs:texture:rotation"));
+        item.set("typeName", std::string("float"));
+        item.set("isAuthored", false);
+        item.set("editable", true);
+        item.set("value", std::string("0"));
         result.set(index++, item);
     }
 
@@ -663,6 +693,23 @@ _SetAttributeFromString(const UsdAttribute& attr, const std::string& value)
             attr.Set(TfToken(value));
             return true;
         }
+        if (typeName == SdfValueTypeNames->Color3f) {
+            std::string normalized = value;
+            for (char& ch : normalized) {
+                if (ch == '(' || ch == ')' || ch == ',') {
+                    ch = ' ';
+                }
+            }
+            std::istringstream input(normalized);
+            float r = 0.0f;
+            float g = 0.0f;
+            float b = 0.0f;
+            if (!(input >> r >> g >> b)) {
+                return false;
+            }
+            attr.Set(GfVec3f(r, g, b));
+            return true;
+        }
     } catch (...) {
         return false;
     }
@@ -683,7 +730,11 @@ SetPrimAttribute(
     if (!prim || !UsdLuxLightAPI(prim)) return false;
 
     UsdAttribute attr = prim.GetAttribute(TfToken(attrName));
-    if (!attr || !_IsEditableScalarAttribute(attr)) return false;
+    if (!attr && UsdLuxDomeLight(prim) && attrName == "inputs:texture:rotation") {
+        UsdEditContext ctx(stage, stage->GetSessionLayer());
+        attr = prim.CreateAttribute(TfToken(attrName), SdfValueTypeNames->Float);
+    }
+    if (!attr || !_IsEditableScalarAttribute(prim, attr)) return false;
 
     bool changed = false;
     {
