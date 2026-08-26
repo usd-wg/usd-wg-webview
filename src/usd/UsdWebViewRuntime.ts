@@ -210,9 +210,10 @@ export class UsdWebViewRuntime {
     }
 
     // Corner-expanded entry: identity indices route it through the existing
-    // face-expansion pipeline untouched (expansion becomes a copy), while the
-    // provided corner-stream normals are honored directly.
-    const positions = new Float32Array(update.positions);
+    // face-expansion pipeline untouched, while the provided corner-stream
+    // normals are honored directly. The native driver has already copied
+    // these arrays out of WASM memory, so retain them without a second copy.
+    const positions = update.positions;
     const vertexCount = positions.length / 3;
     const indices = this.getIdentityIndices(vertexCount);
 
@@ -234,8 +235,8 @@ export class UsdWebViewRuntime {
       name: update.name,
       points: positions,
       indices,
-      normals: update.normals ? new Float32Array(update.normals) : undefined,
-      uvs: update.uvs ? new Float32Array(update.uvs) : undefined,
+      normals: update.normals,
+      uvs: update.uvs,
       matrix: update.matrix,
       color: update.displayColor,
       material,

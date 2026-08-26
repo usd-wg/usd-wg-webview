@@ -64,16 +64,6 @@ _Float32Array(const std::vector<float>& values)
         .new_(emscripten::typed_memory_view(values.size(), values.data()));
 }
 
-emscripten::val
-_Float32View(const std::vector<float>& values)
-{
-    if (values.empty()) {
-        return emscripten::val::global("Float32Array").new_(0);
-    }
-    return emscripten::val(
-        emscripten::typed_memory_view(values.size(), values.data()));
-}
-
 template <typename T>
 bool
 _FormatVtArrayPreview(

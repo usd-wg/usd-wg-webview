@@ -449,10 +449,6 @@ private:
         const SdfPath& rootPath,
         const std::string& purposePolicy)
     {
-        // Typed-array views point into these buffers; they stay valid until
-        // the next Draw/DrawSubtree call, by which time the JS consumer has
-        // copied them into its own geometry attributes.
-        _drawBuffers.clear();
         emscripten::val result = emscripten::val::object();
         emscripten::val meshes = emscripten::val::array();
         size_t meshIndex = 0;
@@ -647,8 +643,11 @@ private:
                 positions.push_back(p[2]);
             }
         }
-        _drawBuffers.push_back(std::move(positions));
-        entry.set("positions", _Float32View(_drawBuffers.back()));
+        // Copy into a JS-owned array before continuing the draw.  With
+        // ALLOW_MEMORY_GROWTH, a later native allocation can replace the
+        // WASM heap buffer and detach any typed-memory views created earlier
+        // in this same draw.
+        entry.set("positions", _Float32Array(positions));
 
         // Normals: authored first (primvars:normals wins over normals attr),
         // natively computed smooth normals as fallback.
@@ -690,8 +689,7 @@ private:
             }
         }
         if (haveNormals) {
-            _drawBuffers.push_back(std::move(normals));
-            entry.set("normals", _Float32View(_drawBuffers.back()));
+            entry.set("normals", _Float32Array(normals));
         }
 
         // UVs (primvars:st), same corner stream.
@@ -700,8 +698,7 @@ private:
         if (stPrimvar &&
             _ExpandPrimvarToCorners<GfVec2f>(
                 stPrimvar, *topo, triangleOrder, timeCode, 2, &uvs)) {
-            _drawBuffers.push_back(std::move(uvs));
-            entry.set("uvs", _Float32View(_drawBuffers.back()));
+            entry.set("uvs", _Float32Array(uvs));
         }
 
         entry.set(
@@ -815,7 +812,6 @@ private:
     bool _rootLayerCleanAfterBake = true;
     bool _inspectionSessionCleanAfterBake = true;
     std::unordered_map<std::string, TriangulatedTopology> _topologyByPath;
-    std::deque<std::vector<float>> _drawBuffers;
     std::set<std::string> _timeVaryingPrimPaths;
 };
 
