@@ -69,6 +69,10 @@ export class NavigationController {
     this.frameAnim = null;
   }
 
+  isFrameAnimating(): boolean {
+    return this.frameAnim !== null;
+  }
+
   setCameraPose(pose: CameraPose): void {
     this.frameAnim = null;
     if (pose.fov !== undefined && Number.isFinite(pose.fov)) {

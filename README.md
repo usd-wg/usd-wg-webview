@@ -87,13 +87,13 @@ side suppliers; they are not alternate mesh runtimes.
 
 ```sh
 npm run test:unit        # vitest unit layer
-npm run test:regression  # visual regression: corpus in tests/corpus/,
-                         # committed baselines in tests/regression/baselines/
+npm run test:regression  # browser renders cases against per-case baselines
+                         # runner and cases: tests/regression/
 npm run test             # both
 ```
 
 Baseline changes are re-blessed with `npm run test:regression:bless` and
-reviewed as PNG diffs in git.
+reviewed against generated PNG diffs in `test-results/regression/results/`.
 
 ## Development
 
