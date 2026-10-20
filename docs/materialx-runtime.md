@@ -45,6 +45,33 @@ shader-generation behavior, not to produce the interactive viewport material.
 
 ## Current Fidelity Notes
 
+### UV orientation and fallback materials
+
+`GeometryBuilder.applyMaterialXUvOptions` is the sole owner of the MaterialX
+V flip. It uses the selected render material's `userData.webviewMaterialX`
+flag, not the presence of an authored MaterialX payload. Standard materials,
+including EXR, compilation-failure, and unavailable-renderer fallbacks, retain
+authored UVs. Resolve materials before geometry creation or UV refresh.
+
+Mixed-material meshes flip only successfully compiled MaterialX subset corner
+ranges. Tangents use the same final UVs. Refreshes start from authored values
+and update both `uv` and `uv1`, so material switching cannot retain or accumulate
+a flip.
+
+Validate both the working MaterialX path and textured fallback:
+
+```sh
+npm run test:unit
+npm run build
+npm run test:regression -- --case materialx-tiled --case materialx-fallback-uv
+```
+
+The fallback case deliberately supplies an unsupported MaterialX
+`UsdPreviewSurface` surface alongside its standard USD Preview texture graph.
+The letter texture must remain upright. Unit coverage includes compilation
+failure, renderer unavailability, mixed subsets, material transitions,
+topology changes, and tangent handedness.
+
 The active path preserves USD-side responsibilities: material binding
 discovery, raw or synthesized `.mtlx` extraction, and texture byte extraction
 remain in the OpenUSD WASM layer. Three's loader owns the MaterialX graph,

@@ -30,16 +30,14 @@ import type { PrimTransform, RenderableMesh, RenderableGaussianSplat, Renderable
 import { GaussianSplatRenderer, type SplatViewOptions } from "./GaussianSplatRenderer";
 import {
   applyGeometryGroups,
-  applyMaterialXUvOptions,
   buildGeometry,
-  faceExpandAttr,
   type GeometryBuildOptions,
   geometryFingerprint,
   getRenderableMaterialKey,
   renderableHasMaterialX,
   updateGeometryPositions,
+  updateGeometryUvs,
 } from "./GeometryBuilder";
-import { Float32BufferAttribute } from "three";
 import { MaterialFactory, type MaterialXDebugOutputMode } from "./MaterialFactory";
 import { TextureCache } from "./TextureCache";
 import { LightingRig } from "./Lighting";
@@ -162,9 +160,10 @@ export class ThreeViewport {
     this.rendererManager.resize();
   }
 
-  private geometryOptions(): GeometryBuildOptions {
+  private geometryOptions(renderedMaterials: Material | Material[]): GeometryBuildOptions {
     return {
       materialXFlipV: this.materialXFlipV,
+      renderedMaterials,
       warnTangents: (renderable, detail) => this.materials.warnIfMaterialXNeedsTangents(renderable, detail),
     };
   }
@@ -527,6 +526,8 @@ export class ThreeViewport {
           continue;
         }
         this.applyRenderableTransform(existing, renderable);
+        this.materials.updateMeshMaterials(existing, renderable, this.materialXFlipV);
+        const geometryOptions = this.geometryOptions(existing.material);
         const len = renderable.points.length;
         const fingerprint = geometryFingerprint(renderable.points);
         if (
@@ -534,13 +535,13 @@ export class ThreeViewport {
           existing.userData.ptsLen !== len ||
           existing.userData.ptsFingerprint !== fingerprint
         ) {
-          updateGeometryPositions(existing.geometry, renderable, this.geometryOptions());
+          updateGeometryPositions(existing.geometry, renderable, geometryOptions);
           existing.userData.ptsLen = len;
           existing.userData.ptsFingerprint = fingerprint;
+        } else {
+          updateGeometryUvs(existing.geometry, renderable, geometryOptions);
         }
-        if (renderable.materialSubsets?.length || renderable.material || renderable.color) {
-          this.materials.updateMeshMaterials(existing, renderable, this.materialXFlipV);
-        }
+        applyGeometryGroups(existing.geometry, renderable);
         if (this.picking.isHighlighted(existing)) {
           this.picking.applyHighlight(existing);
         }
@@ -559,9 +560,8 @@ export class ThreeViewport {
     }
   }
 
-  // Materials-only pass: called once after initial load to apply PBR materials
-  // and textures onto geometry that was already built by renderStage/Hydra.
-  // Never removes or rebuilds geometry — Hydra owns the geometry.
+  // Apply materials/textures, then derive UV orientation and tangents from the
+  // selected render materials. Native geometry/topology remains authoritative.
   async updateRenderablesAsync(renderables: RenderableMesh[]): Promise<void> {
     const textureLoads: Promise<void>[] = [];
     if (renderables.some((renderable) => renderableHasMaterialX(renderable))) {
@@ -573,29 +573,16 @@ export class ThreeViewport {
       const existing = this.meshByPath.get(renderable.path);
       if (!existing) continue;
 
-      // Hydra skips UV extraction for skinned meshes — inject from legacy data.
-      if (renderable.uvs?.length) {
-        const shouldRewriteUvs =
-          !existing.geometry.attributes.uv || renderableHasMaterialX(renderable);
-        if (shouldRewriteUvs) {
-          const faceUvs = faceExpandAttr(renderable.uvs as number[], renderable.indices as number[], 2);
-          if (existing.geometry.attributes.position?.count === faceUvs.length / 2) {
-            const uvAttr = new Float32BufferAttribute(faceUvs, 2);
-            applyMaterialXUvOptions(uvAttr, renderable, this.materialXFlipV);
-            existing.geometry.setAttribute("uv", uvAttr);
-            existing.geometry.setAttribute("uv1", uvAttr.clone());
-          }
-        }
-      }
-      applyGeometryGroups(existing.geometry, renderable);
       this.materials.updateMeshMaterials(existing, renderable, this.materialXFlipV, textureLoads);
+      applyGeometryGroups(existing.geometry, renderable);
+      updateGeometryUvs(existing.geometry, renderable, this.geometryOptions(existing.material));
     }
     await Promise.all(textureLoads);
   }
 
   private createSceneMesh(renderable: RenderableMesh): Mesh {
-    const geometry = buildGeometry(renderable, this.geometryOptions());
     const material = this.materials.createRenderableMaterials(renderable);
+    const geometry = buildGeometry(renderable, this.geometryOptions(material));
     if (renderable.instanceMatrices?.length) {
       const mesh = new InstancedMesh(geometry, material, renderable.instanceMatrices.length);
       mesh.userData.instanceOwnerPath = renderable.instanceOwnerPath ?? renderable.path;
