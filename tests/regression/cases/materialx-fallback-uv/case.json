@@ -1,0 +1,7 @@
+{
+  "id": "materialx-fallback-uv",
+  "notes": "Unsupported MaterialX surface falls back to textured USD Preview; the asymmetric atlas must retain authored UVs.",
+  "rootFile": "scene.usda",
+  "tags": ["requiresWebGpu"],
+  "captures": [{ "name": "default" }]
+}
