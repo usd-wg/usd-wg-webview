@@ -9,6 +9,9 @@ export type RuntimeStatus = {
   state: RuntimeState;
   source: string;
   detail: string;
+  architecture?: "wasm32" | "wasm64";
+  buildId?: string;
+  fallbackReason?: string;
 };
 
 export type StageSummary = {
@@ -267,6 +270,7 @@ export type PrimAttribute = {
 
 export type UsdWebViewBindings = {
   ready?: Promise<unknown>;
+  getMemoryStats?: () => RuntimeMemoryStats;
   createDataFile?: (path: string, data: Uint8Array) => void;
   closeStage?: (path: string) => void;
   extractTransformsAtTime?: (path: string, timeCode: number) => PrimTransform[];
@@ -296,8 +300,19 @@ export type UsdWebViewBindings = {
   extractMaterialPayloads?: (stagePath: string) => MaterialPayloadEntry[];
 };
 
+export type RuntimeMemoryStats = {
+  capacityBytes?: number;
+  maximumBytes?: number;
+  allocatedBytes?: number;
+  allocatorFreeBytes?: number;
+  originalBytes: number;
+  importedFileBytes: number;
+  importedFileCount: number;
+};
+
 export type UsdWebViewFactory = (options: {
   locateFile: (path: string) => string;
+  runtimeModule?: { moduleUrl: string; wasmUrl: string };
 }) => Promise<UsdWebViewBindings> | UsdWebViewBindings;
 
 declare global {

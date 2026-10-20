@@ -1,493 +1,416 @@
-# OpenUSD + MaterialX WASM Build Notes
+# Building the OpenUSD WASM SDK from source
 
-## Purpose
+This is the canonical fresh-machine runbook for **both** native runtimes.
+No maintainer SDK, local archive, private repository, or prebuilt viewer WASM
+is required to compile them. The compiler itself is the pinned binary
+Emscripten distribution, not a from-source LLVM build.
 
-This document records the full OpenUSD + MaterialX + WebAssembly build pipeline used by `usd-wg-webview`.
+For frontend-only development, use the checked-in runtimes and
+[building.md](building.md). You do not need this expensive SDK build.
 
-The goal is to make it possible to recreate the entire WASM SDK from scratch on a new machine without reverse-engineering old build artifacts.
+## Prerequisites and supported hosts
 
----
+The tested host is Linux x86-64 (including WSL2). Windows contributors should
+use WSL2 with the checkout on the Linux filesystem. The scripts use Bash,
+Node, Git, Python, CMake and Ninja; they avoid macOS-only commands. Native
+macOS execution is not yet validated for this complete recipe.
+Use checkout and SDK paths without whitespace; the native whole-archive link
+arguments currently require that layout.
 
-# Repository Layout
+Install Node.js **22+** with npm, Git, Python **3.10+**, CMake **3.27+**, Ninja,
+a host C/C++ toolchain, and CA certificates. On Ubuntu 24.04 / WSL Ubuntu 24.04:
 
-The original workspace looked roughly like:
+```sh
+sudo apt-get update
+sudo apt-get install -y build-essential git python3 cmake ninja-build ca-certificates
+# Install Node.js 22+ separately if needed: https://nodejs.org/en/download
+node --version
+cmake --version
+ninja --version
+```
+
+Older Ubuntu releases may supply an insufficient CMake. Install a newer
+[Kitware release](https://cmake.org/download/) and put it first on PATH.
+OpenUSD requires 3.27; the bindings' own CMake minimum is not the SDK minimum.
+Allow several gigabytes of disk plus toolchain downloads, and substantial
+RAM during compilation/linking. `BUILD_JOBS=8` is the default; use 2 or 4 on
+smaller machines. First builds take substantially longer than incremental
+binding builds. Network access is needed for GitHub, emsdk downloads, npm,
+and Emscripten's pinned zlib port on first use.
+
+## 1. Checkout and install frontend dependencies
+
+```sh
+git clone https://github.com/usd-wg/usd-wg-webview.git
+cd usd-wg-webview
+# Before this feature merges, select its branch:
+git switch feat/wasm64-runtime
+npm ci
+```
+
+The source build replaces generated runtime files in this checkout. Use a
+separate clean clone/worktree if you need to preserve an existing runtime.
+
+## 2. Install the pinned compiler
+
+From the viewer repository root:
+
+```sh
+mkdir -p build
+git clone --branch 6.0.0 --depth 1 https://github.com/emscripten-core/emsdk.git build/emsdk
+test "$(git -C build/emsdk rev-parse HEAD)" = d223ae73c6998296e3ab27cf81dc2c2c9fd383de
+./build/emsdk/emsdk install 6.0.0
+./build/emsdk/emsdk activate 6.0.0
+export EMSDK_ROOT="$PWD/build/emsdk"
+```
+
+Skip cloning if already installed; reuse an activated **6.0.0** SDK by setting
+`EMSDK_ROOT` to its absolute directory. Do not use `latest`: source/library
+and generated-glue compatibility depend on the compiler. The builders source
+`emsdk_env.sh` themselves and reject a different compiler version. The
+[official emsdk installation guide](https://emscripten.org/docs/getting_started/downloads.html)
+describes installation/activation and platform prerequisites.
+
+## 3. Build both complete dependency stacks and bindings
+
+```sh
+export BUILD_JOBS=8
+npm run native:source
+npm run build
+```
+
+`native:source` defaults to `both`. In order it:
+
+1. Downloads exact Git commits and applies the checked-in patches.
+2. Builds MaterialX → OpenSubdiv → oneTBB → OpenUSD separately for WASM32.
+3. Builds/installs the WASM32 bindings and stamps their content-derived IDs.
+4. Repeats the SDK and binding build for WASM64 with separate CMake caches.
+5. Imports the newly built WASM64 pair into its canonical release directory,
+   packages both pairs, and verifies their hashes and architecture.
+
+No prebuilt SDK libraries are used. There is no dependency on another checkout.
+Both architectures share source files, not object files or installed libraries.
+The source build is incremental: rerun the same command after an interruption.
+Failed fetches leave a named `.fetch-*` directory for diagnosis; they are not
+reused as completed source checkouts.
+
+All SDK state defaults to this ignored layout:
 
 ```text
-USD/
-├── OpenUSD/
-├── MaterialX/
-├── MaterialX_WASM_Build/
-├── USD_WASM_Build/
-├── emsdk/
-└── usd-wg-webview/
+build/emsdk/                         # compiler (unless an external SDK is used)
+build/wasm-sdk/
+  sources/{OpenUSD-v26.08,MaterialX-22f1c433,OpenSubdiv-3_6_1,oneTBB-2021.12.0}/
+  build/{wasm32,wasm64}/{materialx,opensubdiv,tbb,openusd}/
+  install/{wasm32,wasm64}/{materialx,usd}/
+  emscripten-cache/
+  ccache/
+build/usd-webview-bindings/          # WASM32 binding CMake cache
+build/usd-webview-bindings-wasm64/   # WASM64 binding CMake cache
 ```
 
----
+Set `USD_WASM_LAB_ROOT` to an absolute directory to relocate SDK state;
+the default is **not** the checkout's parent directory anymore. Keep the same
+root and compiler when resuming. Old archive-based lab directories are not
+accepted by the new Git-revision verifier; use a fresh root instead of
+resetting or overwriting those sources.
 
-# Source Revisions
+Outputs that change in Git:
 
-## OpenUSD
+- `public/usd-webview-bindings/usdWebViewBindingsModule.{js,wasm}` and `build.json`.
+- Content stamps in the shared wrapper and `src/usd/generated/buildId.ts`.
+- `native/artifacts/wasm64/` (the new generated pair and hash record).
 
-Release: `v26.08`
+The WASM64 staging output is `public/localAssets/wasm64-runtime/`.
+`native:package` copies the canonical pair into a content-addressed public
+directory and emits `runtimes.json`; these public packaging outputs are ignored.
+Never copy only the JS glue or only the WASM, and never invent build IDs by hand.
 
-Commit:
+## Pinned inputs and required patches
 
-```text
-ee47c679abde5b467a7b6a41f3b2285564a4222e
+`tools/native-build/sources.json` is the machine-readable source lock.
+
+| Component | Revision |
+| --- | --- |
+| Emscripten | 6.0.0 |
+| OpenUSD 26.08 | `ee47c679abde5b467a7b6a41f3b2285564a4222e` |
+| MaterialX 1.39.6 development revision | `22f1c433e71f49a541a15c4b1f5f9084b97be226` |
+| OpenSubdiv 3.6.1 | `f26d0dedeaf846ea321865a527bb4489691c2f04` |
+| oneTBB 2021.12.0 | `9afd759b72c0c233cd5ea3c3c06b0894c9da9c54` |
+
+Preparation verifies HEAD, the expected patch diff, and absence of unexpected
+untracked source files. It refuses mismatched revisions or additional edits;
+it never resets an existing source tree. `npm run native:prepare -- --check`
+performs the checks without downloads or modifications.
+
+The two patches live under `tools/native-build/patches/`:
+
+- MaterialX: change **the source** `cmake/modules/MaterialXConfig.cmake.in`
+  so Emscripten consumers do not request X11. Editing the installed config is
+  insufficient: a reinstall would overwrite that edit.
+- OpenUSD: let `pxr/imaging/hgi/hgi.cpp` return no platform GPU backend under
+  Emscripten. Geometry/material extraction needs imaging libraries, but this
+  browser viewer renders through Three.js, not a native HGI backend.
+
+The scripts are the authoritative CMake option list. Both stacks are static;
+OpenUSD imaging, USD imaging, and MaterialX support are enabled, while native
+GL/Metal/Vulkan, Python bindings, tools, and optional render plugins are off.
+OpenSubdiv and oneTBB are built explicitly, not borrowed from the host.
+Bindings need the pinned OpenUSD source directory for private headers such as
+`usdzResolver.h`, as well as `pxr_DIR`, `TBB_DIR`, `OpenSubdiv_DIR`, and
+`MaterialX_DIR`; the binding script supplies all of these.
+
+WASM32 must **omit** `MEMORY64`, not set `-sMEMORY64=0`: Emscripten 6.0.0's
+CMake toolchain treats the flag's presence as a pointer-size override.
+WASM64 uses `-sMEMORY64=1` throughout and explicit `WASM_BIGINT=1` /
+8 GiB maximum memory at the final link. Both use growing linear memory.
+The environment helper sets writable cache directories **after** sourcing
+emsdk, which clears some pre-existing Emscripten environment variables.
+
+This pins compiler/dependency inputs, but is not a claim of byte-identical
+builds across hosts, paths, or CMake versions. Content hashes identify actual
+outputs; browser tests establish behavior.
+
+## Partial and incremental builds
+
+Prepare/download only:
+
+```sh
+npm run native:prepare
+npm run native:prepare -- --check
 ```
 
-## usd-wg-webview
+Rebuild a single complete stack (the other canonical runtime must already
+exist for packaging; do not use this alone to release a shared native change):
 
-Commit:
-
-```text
-2095fafafd033fa23386d7ec6d58c7cc33974518
+```sh
+npm run native:source -- wasm32
+npm run native:source -- wasm64
 ```
 
-## MaterialX
+After a bindings-only C++ change, reuse the prepared and installed SDKs:
 
-MaterialX was built from a standalone source checkout.
-
-**TODO:** record exact commit if available.
-
----
-
-# Architecture
-
-The WASM stack is built in layers:
-
-```text
-MaterialX source
-    ↓
-MaterialX_WASM_Build/install
-    ↓
-OpenUSD WASM build
-    ↓
-USD_WASM_Build
-    ↓
-native/usd-webview-bindings
-    ↓
-public/usd-webview-bindings
-    ↓
-browser runtime
+```sh
+export EMSDK_ROOT="$PWD/build/emsdk"
+bash tools/native-build/build-local-bindings.sh wasm32
+bash tools/native-build/build-local-bindings.sh wasm64
+npm run native:package -- public/localAssets/wasm64-runtime
+npm run native:verify
+npm run build
 ```
 
----
+For a dependency build without installing viewer bindings:
 
-# Emscripten
-
-All native WASM builds use the Emscripten SDK.
-
-Example:
-
-```bash
-source /path/to/emsdk/emsdk_env.sh
+```sh
+bash tools/native-build/build-local-sdk.sh wasm32
+bash tools/native-build/build-local-sdk.sh wasm64
 ```
 
-MaterialX and OpenUSD both target:
+These commands assume `native:prepare` already succeeded. Always rebuild both
+variants after shared C++ or dependency changes. Wrapper-only edits need
+`native:stamp` and `native:package`, not a native compile.
 
-```text
-Emscripten.cmake
+## 4. Validate the rebuilt site
+
+```sh
+npx playwright install --with-deps chromium
+npm run test:unit
+npm run test:artifacts
+npm run build
+npm run test:dist -- smoke
+npm run test:dist -- 32
+npm run test:dist -- 64
+git diff --check
 ```
 
----
+Run browser suites sequentially. They use a temporary production-preview
+server (port 8010 by default), assert the selected architecture, and exercise
+the actual generated pairs. Smoke covers seven selection/fallback cases and
+Stats on both architectures; each visual mode runs the full corpus.
+Do not bless differences merely to make a native upgrade pass.
 
-# MaterialX WASM Build
+Routine CI verifies and browser-tests the checked-in pairs; it does **not**
+compile the SDK from scratch. A frontend CI pass alone is not evidence that
+a new native source-build recipe works. See
+[building.md](building.md#ci-and-release-checks) for artifact ownership and
+the release gate.
 
-MaterialX is built separately from OpenUSD.
+### Source-build validation record
 
-This is important because the OpenUSD WASM build path does **not**
-build MaterialX automatically.
+On 2026-10-20, both stacks were rebuilt on Linux x86-64 / WSL2 from fresh
+public Git downloads, using empty SDK build/install/cache directories and the
+existing Emscripten 6.0.0 compiler installation. The resulting production
+package passed 72 unit tests, 10 artifact/bootstrap tests, all seven runtime
+selection cases, Stats checks on both architectures, and all 23 visual captures
+per architecture without baseline changes. Source verification also passed
+after building. This validates the dependency reconstruction and resulting
+runtimes locally; it is not a clean-OS/compiler-install test, macOS certification,
+or a large-scene memory benchmark.
 
-## Key Configuration
+## Troubleshooting and upgrades
 
-Observed from:
+- Missing source/patch: run `native:prepare`. Unexpected source edits require
+  preserving your work and choosing a new SDK root, not a force reset.
+- CMake package-size mismatch: ensure 32-bit flags omit `MEMORY64` entirely.
+  Do not reuse an architecture's CMake cache for the other architecture.
+- X11 requested: verify the MaterialX source patch and rebuild/install it.
+- OpenSubdiv not found: use the binding script, which supplies its config path.
+- Old compiler or moved SDK: install/activate 6.0.0 and set `EMSDK_ROOT` again.
+- Killed compiler/linker: reduce `BUILD_JOBS`, check RAM/swap/disk, and rerun.
+- `invoke_* function import requires a callable`: verify the JS/WASM pair and
+  repackage; see [runtime troubleshooting](building.md#runtime-troubleshooting).
+- Keep SDK state and binding CMake caches tied to one source lock/compiler.
+  For upgrades, use a fresh SDK root **and a fresh viewer checkout/worktree**,
+  update the lock/patches/docs and versioned source directory names in the build
+  scripts, build both variants, then run the complete gate.
+  Existing binding caches retain absolute SDK paths.
 
-```text
-MaterialX_WASM_Build/build/CMakeCache.txt
+## Runtime options and memory testing
+
+### Current runtime contract
+
+Both variants use OpenUSD **26.08**, already introduced on `main` by PR #31.
+The dual-runtime feature adds Memory64 support and selection, not a new USD
+version. Canonical prebuilt pairs, hash verification, release packaging and
+CI are described in [building.md](building.md#dual-runtime-packaging-and-deployment).
+A normal checkout packages both variants automatically for development/build.
+
+| Browser option | Selection | Startup fallback |
+| --- | --- | --- |
+| absent / `wasm=auto` | Validate Memory64, prefer 64 when available | Retry 32 once if 64 initialization fails |
+| `wasm=32` | Always 32; no Memory64 probe | None |
+| `wasm=64` | Require Memory64 and packaged 64 pair | None; fail explicitly |
+
+Current compiled linear-memory ceilings are 2 GiB (32) and 8 GiB (64).
+These are not file-size limits or guarantees of available memory. Fallback
+happens only before stage loading; a later allocation/scene-load failure does
+not restart the stage in another runtime. Ordinary successful startup fetches
+one generated JS/WASM pair, with no speculative download of the other pair.
+The small manifest and shared wrapper load separately.
+
+
+Full-island/high-residency USD and actual mobile-device benchmarks remain
+pending. An 8 GiB build ceiling is not a promised supported scene size.
+
+### Standalone high-address probe
+
+This tests addresses above 4 GiB separately from OpenUSD. It does not load
+a huge scene or establish multi-gigabyte physical residency:
+
+```sh
+source "$EMSDK_ROOT/emsdk_env.sh"
+export EM_CACHE="$PWD/build/wasm-sdk/emscripten-cache"
+mkdir -p public/localAssets/wasm64-probe
+em++ tools/native-build/memory64-probe.cpp \
+  --bind --no-entry -O2 -sMEMORY64=1 -sWASM_BIGINT=1 \
+  -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=8589934592 \
+  -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web \
+  -o public/localAssets/wasm64-probe/probe.mjs
+npm run dev -- --port 8001
+# Other terminal:
+node tools/native-build/run-memory64-probe.mjs http://127.0.0.1:8001
 ```
 
-```text
-MATERIALX_BUILD_SHARED_LIBS=OFF
+The probe accesses both sides of 4 GiB, detects truncated-pointer aliasing,
+copies a high-address typed array through Embind, grows memory, and checks
+that the JavaScript-owned copy survives. It touches only sparse pages and
+boundary sentinels. Historical local Chromium checks passed this probe and
+both small-scene visual suites; neither proves large-scene residency.
 
-MATERIALX_BUILD_GEN_GLSL=ON
+## Large-scene metrics in ? → Stats
 
-MATERIALX_BUILD_RENDER=OFF
-MATERIALX_BUILD_VIEWER=OFF
-MATERIALX_BUILD_TESTS=OFF
-MATERIALX_BUILD_DOCS=OFF
+The existing Stats panel includes live load/runtime/resource sections; there
+is no separate diagnostics window. Open it on the viewer you are testing.
+It samples once per second while visible, plus native load checkpoints.
+Synchronous native work blocks the browser thread, so UI samples cannot expose
+every temporary allocation peak.
 
-MATERIALX_BUILD_OIIO=OFF
-MATERIALX_BUILD_OCIO=OFF
+- Input: selected file count, total bytes, root and largest-file sizes. These
+  are the files supplied to the importer, not only composed layers. A USDZ
+  input is measured at its archive size, not its uncompressed content size.
+- Timings: file import, USD open, extraction/material handoff, total runtime
+  load, and application load-to-ready (including texture decode/viewport setup;
+  excluding the file picker or automation's preceding HTTP downloads).
+- Native: actual linear-memory capacity and compiled maximum from Emscripten;
+  allocated/free allocator bytes from `mallinfo`; sampled allocated peak since
+  the most recent load; remaining permitted linear-memory growth. Capacity
+  includes stack/static data and free space and does not shrink on scene unload.
+  It is not physical resident RAM. Allocator free bytes are not all unused
+  linear-memory bytes. Peak sampling can miss transients within native calls.
+- Imported files: logical MEMFS byte size and retained original byte copies,
+  excluding embedded SDK files. These are JavaScript-backed resources, not
+  extra native allocations. Original copies remain necessary for existing edit
+  behavior; instrumentation does not remove them.
+- Browser: optional `performance.memory` JS used/capacity/limit values.
+  These are approximate, browser-dependent, and may omit external buffers.
+  Unsupported browsers say “Unavailable”, never zero.
+- Renderer: backend, drawing-buffer resolution, frame interval/FPS, draw calls,
+  frame triangles, registered texture/geometry counts, mesh instance count,
+  deduplicated CPU geometry backing-buffer bytes, and known texture dimensions
+  expressed as an RGBA8 base-level byte estimate. The latter is not actual GPU
+  texture storage (float/compressed formats, mipmaps, private MaterialX resources,
+  render targets, environment maps, and splat resources can differ or be absent).
+  WebGPU's renderer-tracked memory bytes are shown when exposed by Three.js.
+  Neither these tracked estimates nor CPU inventories measure physical VRAM.
 
-MATERIALX_BUILD_JS=OFF
-MATERIALX_BUILD_PYTHON=OFF
+Do not add these overlapping categories into a supposed total process-memory
+figure. Neither physical browser-process RAM nor total GPU VRAM is available.
+Frame interval is CPU frame cadence, not GPU execution time. Scene replacement
+resets input/timing/peak metrics; native capacity can remain high by design.
+
+The `GetMemoryStats` native binding returns byte counts as JavaScript Numbers,
+without narrowing WASM64 `size_t` to 32 bits. Its translation unit uses the
+Emscripten compatibility `malloc.h` declaration matching dlmalloc. Rebuild and
+stamp both architectures after changes to this binding.
+
+Validation:
+
+```sh
+npm run test:unit
+npm run build
+npm run test:dist -- smoke
 ```
 
-Install prefix:
+The browser test checks both architectures, positive allocator counters,
+2/8 GiB ceilings, file accounting, replacement reset, unavailable browser heap
+reporting, and existing-panel open/close/narrow-width behavior. Screenshots
+are saved to `/tmp/usd-stats-wasm32.png` and `/tmp/usd-stats-wasm64.png`.
 
-```text
-MaterialX_WASM_Build/install
+
+## Selection verification
+
+```sh
+npm run dev -- --port 8001
+# Other terminal:
+npm run test:runtime-selection -- http://127.0.0.1:8001
 ```
 
-Toolchain:
-
-```text
-emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake
-```
-
-### Representative Configure Command
-
-```bash
-emcmake cmake \
-  -S MaterialX \
-  -B MaterialX_WASM_Build/build \
-  -DCMAKE_INSTALL_PREFIX=$(pwd)/MaterialX_WASM_Build/install \
-  -DMATERIALX_BUILD_SHARED_LIBS=OFF \
-  -DMATERIALX_BUILD_GEN_GLSL=ON \
-  -DMATERIALX_BUILD_RENDER=OFF \
-  -DMATERIALX_BUILD_VIEWER=OFF \
-  -DMATERIALX_BUILD_TESTS=OFF
-```
-
-Build:
-
-```bash
-cmake --build MaterialX_WASM_Build/build --target install
-```
-
----
-
-# OpenUSD WASM Build
-
-The webview WASM artifacts are built against OpenUSD `v26.08` (commit above).
-The stock WASM target disables imaging and MaterialX, so this build enables
-those components through USD CMake arguments. Build OpenSubdiv into the same
-install prefix first, following the manual build below.
-
-With `EMSDK` active and `MATERIALX_WASM_INSTALL` pointing at the MaterialX WASM
-install, configure the WASM SDK with:
-
-```bash
-python3 build_scripts/build_usd.py \
-  --build-target wasm \
-  --no-imaging --no-materialx \
-  --no-python --no-tests --no-tools --no-examples --no-tutorials --no-docs \
-  --no-usdview --no-alembic --no-draco --no-openimageio --no-opencolorio \
-  --no-openvdb --no-ptex --no-embree --no-prman \
-  --build-args "USD,-DCMAKE_HAVE_LIBC_PTHREAD=1 -DTHREADS_HAVE_PTHREAD_ARG=ON -DPXR_BUILD_IMAGING=ON -DPXR_BUILD_USD_IMAGING=ON -DPXR_ENABLE_MATERIALX_SUPPORT=ON -DPXR_ENABLE_GL_SUPPORT=OFF -DPXR_ENABLE_PYTHON_SUPPORT=OFF -DPXR_ENABLE_PRECOMPILED_HEADERS=OFF -DMaterialX_DIR=${MATERIALX_WASM_INSTALL}/lib/cmake/MaterialX" \
-  -j 8 \
-  <install_dir>
-```
-
-For restricted build environments, point `EM_CACHE` at a writable directory
-before building. `CMAKE_HAVE_LIBC_PTHREAD=1` and
-`THREADS_HAVE_PTHREAD_ARG=ON` let CMake configure Emscripten's pthread support
-without its compile probe.
-
-OpenUSD 26.08's `hgi.cpp` also needs the documented Emscripten unknown-platform
-branch below so the no-GPU WASM build returns `nullptr` instead of triggering
-`#error Unknown Platform`.
-
-The resulting install directory is:
-
-```text
-USD_WASM_Build
-```
-
----
-
-# OpenUSD WASM Configuration
-
-Observed from:
-
-```text
-USD_WASM_Build/build/OpenUSD/CMakeCache.txt
-```
-
-## Core
-
-```text
-BUILD_SHARED_LIBS=OFF
-
-CMAKE_FIND_ROOT_PATH=<USD_WASM_Build>
-
-CMAKE_CXX_FLAGS=-pthread --use-port=zlib
-CMAKE_EXE_LINKER_FLAGS=-pthread
-```
-
-## Imaging
-
-```text
-PXR_BUILD_IMAGING=ON
-PXR_BUILD_USD_IMAGING=ON
-```
-
-## MaterialX
-
-```text
-PXR_ENABLE_MATERIALX_SUPPORT=ON
-
-MaterialX_DIR=
-<MaterialX_WASM_Build/install/lib/cmake/MaterialX>
-```
-
-This is the most important customization in the build.
-
-The stock OpenUSD WASM build path explicitly disables MaterialX support.
-
-MaterialX was enabled by pointing OpenUSD at a separately-built WASM MaterialX installation.
-
----
-
-# Included Dependencies
-
-Confirmed from build artifacts and generated package configs.
-
-## oneTBB
-
-```text
-oneTBB 2021.12.0
-```
-
-Built automatically by the WASM target.
-
-Libraries:
-
-```text
-libtbb.a
-libtbbmalloc.a
-```
-
----
-
-## OpenSubdiv
-
-```text
-OpenSubdiv 3.6.1
-```
-
-Libraries:
-
-```text
-libosdCPU.a
-libosdGPU.a
-```
-
----
-
-# Enabled USD Components
-
-Confirmed from:
-
-```text
-USD_WASM_Build/pxrConfig.cmake
-```
-
-## MaterialX
-
-```text
-usdMtlx
-hdMtlx
-```
-
-## Hydra
-
-```text
-hd
-hdar
-hdGp
-hdsi
-usdHydra
-```
-
-## USD Imaging
-
-```text
-usdImaging
-usdProcImaging
-usdSkelImaging
-usdVolImaging
-```
-
-## Image IO
-
-```text
-hioOpenEXR
-hioAvif
-```
-
----
-
-# WASM Bindings
-
-Bindings are built from:
-
-```text
-usd-wg-webview/native/usd-webview-bindings
-```
-
-Browser-facing wrapper:
-
-```text
-usd-wg-webview/public/usd-webview-bindings/usdWebViewBindings.js
-```
-
----
-
-# Binding Build
-
-Configure:
-
-```bash
-source /path/to/emsdk/emsdk_env.sh
-
-emcmake cmake \
-  -S native/usd-webview-bindings \
-  -B build/usd-webview-bindings \
-  -Dpxr_DIR=/path/to/USD_WASM_Build \
-  -DTBB_DIR=/path/to/USD_WASM_Build/lib/cmake/TBB \
-  -DUSD_WEBVIEW_OPENUSD_SOURCE_DIR=/path/to/OpenUSD
-```
-
-Build:
-
-```bash
-cmake --build build/usd-webview-bindings --target install
-```
-
----
-
-# Why OpenUSD Source Is Required
-
-The bindings depend on OpenUSD private headers that are not installed into the WASM SDK.
-
-Example:
-
-```text
-pxr/usd/sdf/usdzResolver.h
-```
-
-Because of this:
-
-```text
-USD_WASM_Build alone is insufficient.
-An OpenUSD source checkout is also required.
-```
-
----
-
-# Native Rebuild Loop
-
-After modifying native bindings:
-
-```bash
-source /path/to/emsdk/emsdk_env.sh
-
-cmake --build build/usd-webview-bindings \
-  --target install
-```
-
-Then update:
-
-```text
-public/usd-webview-bindings/usdWebViewBindings.js
-  _wasmBuildId
-  _wrapperBuildId
-
-src/usd/UsdWebViewRuntime.ts
-  RUNTIME_ENTRYPOINT
-```
-
-to force browser cache invalidation.
-
----
-
-# Newer OpenUSD WASM Fixups
-
-When using newer OpenUSD / MaterialX checkouts, the stock OpenUSD WASM target
-still disables imaging and MaterialX at the `build_usd.py` option layer. If
-those features are forced back on with `--build-args USD,...`, expect these
-additional fixups.
-
-## MaterialX config may request X11
-
-MaterialX 1.39.x can install a `MaterialXConfig.cmake` that unconditionally
-requests X11 on Linux, even when consumed by an Emscripten build. Patch the
-installed WASM MaterialX config to skip X11 under Emscripten:
-
-```cmake
-if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
-    find_dependency(X11 REQUIRED COMPONENTS Xt)
-    ...
-endif()
-```
-
-## OpenSubdiv may need a manual WASM build
-
-If imaging is enabled only through USD CMake overrides, `build_usd.py` may not
-schedule OpenSubdiv as a dependency. Build OpenSubdiv v3.6.1 into the same USD
-WASM install prefix before building OpenUSD imaging:
-
-```bash
-emcmake cmake -S OpenSubdiv-3_6_1 -B USD_WASM_Build/build/OpenSubdiv-3_6_1 \
-  -G Ninja \
-  -DCMAKE_INSTALL_PREFIX=$PWD/USD_WASM_Build \
-  -DNO_EXAMPLES=ON -DNO_TUTORIALS=ON -DNO_REGRESSION=ON -DNO_DOC=ON \
-  -DNO_OMP=ON -DNO_CUDA=ON -DNO_OPENCL=ON -DNO_DX=ON \
-  -DNO_TESTS=ON -DNO_GLEW=ON -DNO_GLFW=ON -DNO_PTEX=ON -DNO_TBB=ON \
-  -DNO_METAL=ON -DNO_OPENGL=ON -DBUILD_SHARED_LIBS=OFF \
-  -DOSD_PATCH_SHADER_SOURCE_GLSL=ON
-
-cmake --build USD_WASM_Build/build/OpenSubdiv-3_6_1 --target install -j 8
-```
-
-## HGI unknown platform with GPU support off
-
-With `PXR_ENABLE_GL_SUPPORT=OFF` / GPU support off, current OpenUSD can still
-compile the base `hgi` library. Under Emscripten, `pxr/imaging/hgi/hgi.cpp` may
-hit:
-
-```text
-#error Unknown Platform
-```
-
-For a no-GPU web extraction build, add an Emscripten branch before the unknown
-platform fallback:
-
-```cpp
-#elif defined(__EMSCRIPTEN__)
-    "";
-    return nullptr;
-```
-
-This lets HGI compile without manufacturing a fake GL/Metal/Vulkan backend.
-
----
-
-# Repro Checklist
-
-To recreate the WASM environment on a new machine:
-
-- Install emsdk
-- Build MaterialX for WASM
-- Build OpenUSD for WASM
-- Enable MaterialX support in OpenUSD
-- Build usd-webview-bindings
-- Update browser cache-bust identifiers
-- Verify runtime loads successfully
-
-Required source trees:
-
-```text
-OpenUSD/
-MaterialX/
-usd-wg-webview/
-```
-
-Required generated artifacts:
-
-```text
-MaterialX_WASM_Build/
-USD_WASM_Build/
-```
+Manual checks:
+
+- `http://localhost:8001/`: auto; a capable browser should show `wasm64-<hash>`.
+- `http://localhost:8001/?wasm=32`: compatibility rendering, `wasm32-<hash>`.
+- `http://localhost:8001/?wasm=64`: strict 64-bit rendering, or an explicit
+  error if unsupported/unpackaged.
+- In DevTools Network, filter `usdWebViewBindingsModule`, disable cache,
+  clear the log, and reload. Normal startup requests exactly one generated
+  JS file and one WASM file for the selected variant.
+- To exercise startup failure fallback, block
+  `http://localhost:8001/usd-webview-bindings/wasm64/*` in Chrome's Request
+  conditions drawer and reload the auto URL (no `wasm=64`). This drawer uses
+  URLPattern syntax; the old leading `*/` glob fails to parse. Match the actual
+  host/port if different. Alternatively right-click the WASM64 module request
+  in Network and choose Block request. Enable blocking, keep DevTools open,
+  and clear unrelated Network filters. Expect a 32-bit build label and a
+  fallback reason on hover or in Stats.
+  Remove the block afterwards. This tests startup failure, not an unsupported
+  engine; the automated test separately simulates the feature probe failure.
+
+Chrome Device Mode changes viewport/input/device characteristics, not the
+WebAssembly engine; it does **not** imply WASM32 fallback. The automated mobile
+emulation case therefore still selects WASM64 on this browser. Consult
+[Chrome's Device Mode limitations](https://developer.chrome.com/docs/devtools/device-mode)
+and use real devices to test actual browser support and memory pressure.
+Mobile hardware might support Memory64 yet still have little available RAM.
+
+Large real-world USD memory residency and actual mobile-browser coverage are
+still unverified; the 8 GiB WASM64 maximum is a build ceiling, not a promised
+scene size.

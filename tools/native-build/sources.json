@@ -1,0 +1,27 @@
+{
+  "emscripten": "6.0.0",
+  "dependencies": [
+    {
+      "directory": "OpenUSD-v26.08",
+      "url": "https://github.com/PixarAnimationStudios/OpenUSD.git",
+      "revision": "ee47c679abde5b467a7b6a41f3b2285564a4222e",
+      "patch": "openusd-emscripten-hgi.patch"
+    },
+    {
+      "directory": "MaterialX-22f1c433",
+      "url": "https://github.com/AcademySoftwareFoundation/MaterialX.git",
+      "revision": "22f1c433e71f49a541a15c4b1f5f9084b97be226",
+      "patch": "materialx-emscripten-config.patch"
+    },
+    {
+      "directory": "OpenSubdiv-3_6_1",
+      "url": "https://github.com/PixarAnimationStudios/OpenSubdiv.git",
+      "revision": "f26d0dedeaf846ea321865a527bb4489691c2f04"
+    },
+    {
+      "directory": "oneTBB-2021.12.0",
+      "url": "https://github.com/oneapi-src/oneTBB.git",
+      "revision": "9afd759b72c0c233cd5ea3c3c06b0894c9da9c54"
+    }
+  ]
+}

@@ -36,6 +36,11 @@ required.
 - **USD 26 compatibility** - works with older USDZ files that authored
   `material:binding` before `UsdShadeMaterialBindingAPI` became a formal
   applied-API schema.
+- **Dual WASM runtimes** - OpenUSD 26.08 in WASM64 on capable browsers, with
+  WASM32 compatibility fallback. Only the selected native JS/WASM pair loads.
+- **Memory diagnostics** - the existing **? > Stats** panel reports input
+  sizes, load timings, native allocation/capacity, browser heap where available,
+  and renderer resource metrics with explicit estimate/availability labels.
 
 ## Current Constraints
 
@@ -44,6 +49,10 @@ required.
 - **USDLux fidelity** - USDLux is translated to the light types available in
   Three.js, not path-traced. WebGL and WebGPU have different area-light
   behavior; see [Lighting](docs/lighting.md).
+- **Large scenes** - WASM32/WASM64 currently permit 2/8 GiB of linear memory.
+  These are build ceilings, not supported scene-file sizes or available RAM.
+  Input copies, JavaScript buffers, textures, and GPU resources add costs.
+  Large-scene and real-mobile benchmarks remain pending.
 
 ## Light Gizmos
 
@@ -91,6 +100,11 @@ npm run test:unit        # vitest unit layer
 npm run test:regression  # browser renders cases against per-case baselines
                          # runner and cases: tests/regression/
 npm run test             # both
+npm run test:artifacts    # native pair/hash and release-packaging tests
+npm run build            # packages/verifies both native runtimes into dist/
+npm run test:dist -- 32   # full corpus against the production build, forced 32
+npm run test:dist -- 64   # same corpus, forced 64 (never silently downgrades)
+npm run test:dist -- smoke # automatic selection, fallback and Stats checks
 ```
 
 Baseline changes are re-blessed with `npm run test:regression:bless` and
@@ -103,11 +117,24 @@ npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. The WASM bindings must be built first — see [docs/building.md](docs/building.md).
+Open the local URL printed by Vite. Both native pairs are supplied as prebuilt
+artifacts; a native toolchain is only needed when changing the bindings.
+`npm run dev` and `npm run build` package the pairs automatically.
+
+| URL option | Behavior |
+| --- | --- |
+| No option, or `?wasm=auto` | Prefer WASM64 if supported; retry WASM32 once on startup failure |
+| `?wasm=32` | Force WASM32 without probing Memory64 |
+| `?wasm=64` | Require WASM64; unsupported or failed startup is an error |
+
+The status-bar build name identifies the loaded pair. Chrome mobile emulation
+does not disable Memory64. See [building.md](docs/building.md) for packaging/CI
+and [wasm-sdk.md](docs/wasm-sdk.md#selection-verification) for fallback tests.
 
 ## Documentation
 
 - [Building](docs/building.md) — Prerequisites and build instructions for the WASM bindings and frontend
+- [WASM SDK](docs/wasm-sdk.md) — Fresh-machine setup and `npm run native:source` to build both runtimes from pinned sources, plus runtime options and memory metrics
 - [Lighting](docs/lighting.md) — USDLux translation, WebGL/WebGPU behavior, gizmos, editable attributes, and limitations
 - [Material and Geometry Strategy](docs/material-geometry-strategy.md) — Unified stage-driver geometry, authored-material payloads, and known rendering constraints
 - [USD Material Fidelity](tools/usd-material-fidelity/README.md) — Opt-in MaterialX/USD shaderball fidelity harness, setup, and current baseline

@@ -77,6 +77,8 @@ export const state = {
   currentStageSummary: null as StageSummary | null,
   currentRendererStats: null as RendererStats | null,
   isLoadingStage: false,
+  stageLoadStartedAt: null as number | null,
+  stageLoadElapsedMs: null as number | null,
   variantChangeSerial: 0,
   stageLoadSerial: 0,
 

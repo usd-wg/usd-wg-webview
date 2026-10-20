@@ -1,0 +1,14 @@
+{
+  "buildId": "wasm32-d5af53757e06",
+  "architecture": "wasm32",
+  "artifacts": {
+    "usdWebViewBindingsModule.js": {
+      "bytes": 114594,
+      "sha256": "cc7a80334592271db2e277c0acfbf92f60b1ef020912e6a6aa070c9b48316c69"
+    },
+    "usdWebViewBindingsModule.wasm": {
+      "bytes": 19912869,
+      "sha256": "bdf51d22bdb5c4a8001dc52221eab588ec2a2435db5af9bd223b459ce25a3243"
+    }
+  }
+}

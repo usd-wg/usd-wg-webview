@@ -14,6 +14,9 @@ import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
 import type { RenderableMaterial, RenderableTexture } from "../usd/types";
 
 export class TextureCache {
+  getTrackedTextures(): Iterable<Texture> {
+    return this.managedTextures;
+  }
   private readonly textureLoader = new TextureLoader();
   private readonly exrLoader = new EXRLoader();
   private readonly textureUrls: string[] = [];

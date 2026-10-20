@@ -45,6 +45,7 @@ import { NavigationController, type CameraPose, type NavigationMode } from "./Na
 import { PickingController } from "./Picking";
 import { RendererManager } from "./RendererManager";
 import type { ViewportContext } from "./viewerContext";
+import { collectResourceMetrics } from "./resourceMetrics";
 
 export type { NavigationMode } from "./Navigation";
 export type ViewUpAxis = "y" | "z";
@@ -99,6 +100,9 @@ export class ThreeViewport {
   private readonly pathByMesh = new Map<Mesh, string>();
   private splatRenderer: GaussianSplatRenderer | null;
   private animationFrame = 0;
+  private frameWindowStart = 0;
+  private frameCount = 0;
+  private frameIntervalMs: number | undefined;
   private readonly manualRenderMode =
     new URLSearchParams(window.location.search).get("manualRender") === "1";
   private renderQueue: Promise<void> = Promise.resolve();
@@ -175,6 +179,14 @@ export class ThreeViewport {
     }
 
     const render = () => {
+      const now = performance.now();
+      if (!this.frameWindowStart) this.frameWindowStart = now;
+      this.frameCount++;
+      if (now - this.frameWindowStart >= 1000) {
+        this.frameIntervalMs = (now - this.frameWindowStart) / this.frameCount;
+        this.frameWindowStart = now;
+        this.frameCount = 0;
+      }
       onTick?.();
       this.navigation.tickGameNavigation();
       this.navigation.tickFrameAnim();
@@ -188,6 +200,26 @@ export class ThreeViewport {
     };
 
     render();
+  }
+
+  getResourceStats() {
+    const info = this.ctx.renderer.info as unknown as {
+      memory?: { geometries?: number; textures?: number; total?: number; texturesSize?: number };
+      render?: { calls?: number; drawCalls?: number; triangles?: number };
+    };
+    return {
+      ...collectResourceMetrics(this.stageRoot, this.textures.getTrackedTextures()),
+      backend: this.rendererManager.isWebGpuRenderer() ? "WebGPU" : "WebGL",
+      drawCalls: this.rendererManager.isWebGpuRenderer() ? info.render?.drawCalls : info.render?.calls,
+      frameTriangles: info.render?.triangles,
+      rendererTextures: info.memory?.textures,
+      rendererGeometries: info.memory?.geometries,
+      rendererTrackedBytes: info.memory?.total,
+      rendererTextureBytes: info.memory?.texturesSize,
+      frameIntervalMs: this.frameIntervalMs,
+      width: this.ctx.renderer.domElement.width,
+      height: this.ctx.renderer.domElement.height,
+    };
   }
 
   renderForCapture(passes = 3): Promise<void> {

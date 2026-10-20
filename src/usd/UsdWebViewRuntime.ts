@@ -15,6 +15,8 @@ import type {
   StageSummary,
 } from "./types";
 import { WASM_BUILD_NAME } from "./generated/buildId";
+import { loadSelectedRuntime, parseRuntimeManifest, runtimePreference, type RuntimeManifest } from "./runtimeSelection";
+import { summarizeFiles, type StageLoadMetrics } from "./loadMetrics";
 
 const RUNTIME_ENTRYPOINT = `/usd-webview-bindings/usdWebViewBindings.js?v=${WASM_BUILD_NAME}`;
 const RUNTIME_ASSET_ROOT = "/usd-webview-bindings/";
@@ -30,6 +32,16 @@ export class UsdWebViewRuntime {
   // reallocating on every playback frame.
   private identityIndicesByLength = new Map<number, Uint32Array>();
   currentStagePath: string | null = null;
+  loadMetrics: StageLoadMetrics | null = null;
+  private peakAllocatedBytes = 0;
+
+  getMemoryStats() {
+    const memory = this.bindings?.getMemoryStats?.();
+    if (memory?.allocatedBytes !== undefined) {
+      this.peakAllocatedBytes = Math.max(this.peakAllocatedBytes, memory.allocatedBytes);
+    }
+    return { ...memory, peakAllocatedBytes: memory?.allocatedBytes === undefined ? undefined : this.peakAllocatedBytes };
+  }
 
   status: RuntimeStatus = {
     state: "idle",
@@ -57,17 +69,38 @@ export class UsdWebViewRuntime {
         return this.status;
       }
 
-      this.bindings = await window.UsdWebViewBindings.createRuntime({
-        locateFile: (path) => `${RUNTIME_ASSET_ROOT}${path}`,
+      const preference = runtimePreference(window.location.search);
+      let manifest: RuntimeManifest = {
+        version: 1,
+        wasm32: {
+          architecture: "wasm32", buildId: WASM_BUILD_NAME,
+          moduleUrl: `${RUNTIME_ASSET_ROOT}usdWebViewBindingsModule.js?v=${WASM_BUILD_NAME}`,
+          wasmUrl: `${RUNTIME_ASSET_ROOT}usdWebViewBindingsModule.wasm?v=${WASM_BUILD_NAME}`,
+        },
+      };
+      // Optional small manifest; ordinary source checkouts remain WASM32-only.
+      const response = await fetch(`${RUNTIME_ASSET_ROOT}runtimes.json`, { cache: "no-store" });
+      if (response.ok) manifest = parseRuntimeManifest(await response.json());
+      else if (response.status !== 404) throw new Error(`Runtime manifest HTTP ${response.status}`);
+      const loaded = await loadSelectedRuntime(manifest, preference, async (variant) => {
+        const bindings = await window.UsdWebViewBindings!.createRuntime({
+          locateFile: (path) => `${RUNTIME_ASSET_ROOT}${path}`,
+          runtimeModule: variant,
+        });
+        await bindings.ready;
+        return bindings;
       });
-      await this.bindings.ready;
+      this.bindings = loaded.runtime;
 
       this.status = {
         state: "ready",
         source: RUNTIME_ENTRYPOINT,
-        detail: `USD Web View bindings ready (${WASM_BUILD_NAME})`,
+        architecture: loaded.variant.architecture,
+        buildId: loaded.variant.buildId,
+        fallbackReason: loaded.fallbackReason,
+        detail: `USD Web View bindings ready (${loaded.variant.architecture}, ${loaded.variant.buildId})${loaded.fallbackReason ? " — WASM64 startup failed; using WASM32" : ""}`,
       };
-      console.info(`[USD WebView] runtime ready on WASM build ${WASM_BUILD_NAME}`);
+      console.info("[USD WebView] runtime ready", this.status);
       return this.status;
     } catch (error) {
       this.status = {
@@ -80,6 +113,23 @@ export class UsdWebViewRuntime {
   }
 
   async loadStage(request: StageLoadRequest): Promise<StageLoadResult> {
+    const started = performance.now();
+    this.peakAllocatedBytes = 0;
+    this.loadMetrics = { ...summarizeFiles(request.files, request.rootFile ?? request.files[0]), state: "loading" };
+    try {
+      const result = await this.loadStageContents(request);
+      this.loadMetrics.state = result.summary?.error ? "failed" : "complete";
+      return result;
+    } catch (error) {
+      this.loadMetrics.state = "failed";
+      throw error;
+    } finally {
+      this.loadMetrics.runtimeMs = performance.now() - started;
+      this.getMemoryStats();
+    }
+  }
+
+  private async loadStageContents(request: StageLoadRequest): Promise<StageLoadResult> {
     const rootFile = request.rootFile ?? request.files[0];
     this.purposePolicy = request.purposePolicy ?? this.purposePolicy;
 
@@ -105,6 +155,7 @@ export class UsdWebViewRuntime {
     this.hasStageDriver = false;
     this.materialPayloadByPath.clear();
 
+    const importStarted = performance.now();
     const materialXResources: RenderableTexture[] = [];
     for (const file of request.files) {
       const path = file.webkitRelativePath || file.name;
@@ -119,9 +170,14 @@ export class UsdWebViewRuntime {
       }
     }
     this.materialXResources = materialXResources;
+    this.loadMetrics!.importMs = performance.now() - importStarted;
+    this.getMemoryStats();
 
     const rootPath = rootFile.webkitRelativePath || rootFile.name;
+    const openStarted = performance.now();
     const summary = await this.bindings.openStage(rootPath, request.loadAllPayloads ?? true);
+    this.loadMetrics!.openMs = performance.now() - openStarted;
+    this.getMemoryStats();
     const normalizedSummary = normalizeStageSummary(rootPath, summary);
 
     if (normalizedSummary.error) {
@@ -129,6 +185,7 @@ export class UsdWebViewRuntime {
     }
 
     this.currentStagePath = rootPath;
+    const extractionStarted = performance.now();
     const gaussianSplats = this.bindings.extractGaussianSplats?.(rootPath) ?? [];
     const lights = this.bindings.extractStageLights?.(rootPath, normalizedSummary.startTimeCode ?? 0) ?? [];
 
@@ -142,6 +199,7 @@ export class UsdWebViewRuntime {
       diagnostics = this.bindings.stageDriverGetDiagnostics?.(rootPath);
     }
 
+    this.loadMetrics!.extractionMs = performance.now() - extractionStarted;
     return { summary: normalizedSummary, renderables, gaussianSplats, lights, diagnostics };
   }
 
@@ -210,9 +268,10 @@ export class UsdWebViewRuntime {
     }
 
     // Corner-expanded entry: identity indices route it through the existing
-    // face-expansion pipeline untouched (expansion becomes a copy), while the
-    // provided corner-stream normals are honored directly.
-    const positions = new Float32Array(update.positions);
+    // face-expansion pipeline untouched, while the provided corner-stream
+    // normals are honored directly. The native driver has already copied
+    // these arrays out of WASM memory, so retain them without a second copy.
+    const positions = update.positions;
     const vertexCount = positions.length / 3;
     const indices = this.getIdentityIndices(vertexCount);
 
@@ -234,8 +293,8 @@ export class UsdWebViewRuntime {
       name: update.name,
       points: positions,
       indices,
-      normals: update.normals ? new Float32Array(update.normals) : undefined,
-      uvs: update.uvs ? new Float32Array(update.uvs) : undefined,
+      normals: update.normals,
+      uvs: update.uvs,
       matrix: update.matrix,
       color: update.displayColor,
       material,

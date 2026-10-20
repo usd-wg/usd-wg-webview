@@ -21,6 +21,8 @@ export async function loadFiles(files: File[]): Promise<void> {
     return;
   }
   const loadSerial = ++state.stageLoadSerial;
+  state.stageLoadStartedAt = performance.now();
+  state.stageLoadElapsedMs = null;
 
   hidePlaybar();
   state.isLoadingStage = true;
@@ -55,6 +57,7 @@ export async function loadFiles(files: File[]): Promise<void> {
   } catch (error) {
     if (loadSerial === state.stageLoadSerial) {
       state.isLoadingStage = false;
+      state.stageLoadElapsedMs = performance.now() - state.stageLoadStartedAt!;
       setStatus(`Stage load failed: ${error instanceof Error ? error.message : String(error)}`, false);
       if (automationEnabled) {
         setAutomationState(
@@ -164,6 +167,7 @@ export async function loadFiles(files: File[]): Promise<void> {
   }
   if (loadSerial === state.stageLoadSerial) {
     state.isLoadingStage = false;
+    state.stageLoadElapsedMs = performance.now() - state.stageLoadStartedAt!;
     const stageFailed = !!result.summary?.error;
     const inferredCount = result.diagnostics?.inferredBindingCount ?? 0;
     const readyMessage = inferredCount > 0

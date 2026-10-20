@@ -4,8 +4,11 @@ project(usdWebViewBindings LANGUAGES CXX)
 
 find_package(pxr REQUIRED CONFIG)
 
-set(USD_WEBVIEW_OPENUSD_SOURCE_DIR "/Users/michaelbecker/dev/USD/OpenUSD"
+set(USD_WEBVIEW_OPENUSD_SOURCE_DIR ""
     CACHE PATH "OpenUSD source checkout used for private headers not installed by the WASM SDK")
+if(NOT EXISTS "${USD_WEBVIEW_OPENUSD_SOURCE_DIR}/pxr/usd/sdf/usdzResolver.h")
+    message(FATAL_ERROR "Set USD_WEBVIEW_OPENUSD_SOURCE_DIR to the pinned OpenUSD source checkout; see docs/wasm-sdk.md")
+endif()
 
 if(TARGET TBB::tbb)
     get_target_property(_usd_webview_tbb_location TBB::tbb IMPORTED_LOCATION)
@@ -32,6 +35,10 @@ add_executable(usdWebViewBindingsModule
 )
 
 target_compile_features(usdWebViewBindingsModule PRIVATE cxx_std_17)
+# Emscripten's size_t-safe mallinfo declaration lives in its compatibility
+# include directory (the regular musl malloc.h omits it).
+set_source_files_properties(src/bindings.cpp PROPERTIES
+    COMPILE_OPTIONS "-isystem;${EMSCRIPTEN_SYSROOT}/include/compat")
 target_compile_options(usdWebViewBindingsModule PRIVATE -fPIC)
 target_include_directories(usdWebViewBindingsModule PRIVATE ${USD_WEBVIEW_OPENUSD_SOURCE_DIR})
 

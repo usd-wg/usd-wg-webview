@@ -7,6 +7,7 @@
 //   node tests/regression/run.mjs --update-baselines
 //   node tests/regression/run.mjs --case variants --case payload-toggle
 //   node tests/regression/run.mjs --base-url http://127.0.0.1:8000
+//   node tests/regression/run.mjs --base-url http://127.0.0.1:8001 --runtime-assets /localAssets/wasm64-runtime/
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -52,19 +53,35 @@ export async function listCases() {
   return cases;
 }
 
-async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false } = {}) {
+async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false, wasm = "auto" } = {}) {
+  const manifestUrl = new URL(`/__regression/${caseSpec.id}/manifest.json`, baseUrl).href;
+  const routedFiles = new Map(caseSpec.files.map(file => [
+    new URL(`/__regression/${caseSpec.id}/files/${file.path.split("/").map(encodeURIComponent).join("/")}`, baseUrl).href,
+    file,
+  ]));
   const manifest = {
     caseId: caseSpec.id,
     rootFile: caseSpec.rootFile,
-    files: caseSpec.files,
+    files: [...routedFiles].map(([url, file]) => ({ path: file.path, url })),
   };
   const manifestPath = path.join(GENERATED_ROOT, caseSpec.id, "manifest.json");
   await ensureDir(path.dirname(manifestPath));
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  // Serve fixtures through Playwright, so the same suite can target the built
+  // deployment artifact without exposing Vite's development-only /@fs endpoint.
+  await page.unroute("**/__regression/**");
+  await page.route("**/__regression/**", async route => {
+    const url = route.request().url();
+    if (url === manifestUrl) return route.fulfill({ json: manifest });
+    const file = routedFiles.get(url);
+    if (!file) return route.fulfill({ status: 404 });
+    return route.fulfill({ body: await fs.readFile(file.absolutePath), contentType: "application/octet-stream" });
+  });
 
   const caseUrl = new URL("/", baseUrl);
   caseUrl.searchParams.set("automation", "1");
-  caseUrl.searchParams.set("automationManifest", `/@fs/${toPosixPath(manifestPath)}`);
+  caseUrl.searchParams.set("wasm", wasm);
+  caseUrl.searchParams.set("automationManifest", manifestUrl);
   caseUrl.searchParams.set("settleFrames", String(CAPTURE.settleFrames));
   if (forceWebGL) {
     caseUrl.searchParams.set("forceWebGL", "1");
@@ -80,6 +97,13 @@ async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false } = {})
     if (!api) throw new Error("USD Web View automation API is unavailable.");
     await api.waitForReady(timeoutMs);
   }, { timeoutMs: CAPTURE.timeoutMs });
+  const actualRuntime = await page.locator("#runtimeArchitectureLabel").evaluate(element => ({
+    architecture: element.dataset.architecture,
+    buildId: element.dataset.buildId,
+  }));
+  if (wasm !== "auto" && actualRuntime.architecture !== `wasm${wasm}`) {
+    throw new Error(`Expected wasm${wasm}, got ${actualRuntime.architecture}`);
+  }
 
   const captured = [];
   for (const capture of caseSpec.captures ?? [{ name: "default" }]) {
@@ -107,7 +131,7 @@ async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false } = {})
 
     const screenshotPath = path.join(RESULTS_ROOT, `${caseSpec.id}--${capture.name}.png`);
     await page.locator(".viewport canvas").last().screenshot({ path: screenshotPath });
-    captured.push({ captureName: capture.name, screenshotPath });
+    captured.push({ captureName: capture.name, screenshotPath, actualRuntime });
   }
   return captured;
 }
@@ -116,7 +140,12 @@ export async function runRegression({
   updateBaselines = false,
   caseFilter = [],
   baseUrl = null,
+  wasm = "auto",
+  runtimeAssets = null,
 } = {}) {
+  if (runtimeAssets && (!runtimeAssets.startsWith("/localAssets/") || updateBaselines)) {
+    throw new Error("Experimental runtime assets must be under /localAssets/ and cannot bless baselines.");
+  }
   await fs.rm(RESULTS_ROOT, { recursive: true, force: true });
   await ensureDir(RESULTS_ROOT);
 
@@ -139,9 +168,17 @@ export async function runRegression({
   });
 
   const entries = [];
+  const runtimeRequests = [];
+  let runtimeBuild = null;
   try {
     if (server) {
       await waitForHttpReady(actualBaseUrl, CAPTURE.timeoutMs);
+    }
+    if (runtimeAssets) {
+      const response = await fetch(new URL(`${runtimeAssets.replace(/\/$/, "")}/build.json`, actualBaseUrl));
+      if (!response.ok) throw new Error("Experimental runtime build.json is unavailable.");
+      runtimeBuild = await response.json();
+      console.info(`[runtime override] ${runtimeBuild.buildId}`);
     }
     const page = await browser.newPage({
       viewport: { width: CAPTURE.viewportWidth, height: CAPTURE.viewportHeight },
@@ -150,6 +187,18 @@ export async function runRegression({
     page.on("pageerror", (error) => {
       console.warn(`[page error] ${error.message}`);
     });
+    if (runtimeAssets) {
+      // Test-only override: exercise the same maintained wrapper and frontend
+      // with alternate generated glue/WASM. This is not production selection.
+      await page.route(/\/usd-webview-bindings\/usdWebViewBindingsModule\.(js|wasm)(\?|$)/, route => {
+        const url = new URL(route.request().url());
+        const filename = url.pathname.split("/").at(-1);
+        url.pathname = `${runtimeAssets.replace(/\/$/, "")}/${filename}`;
+        url.search = ""; // The wrapper's normal WASM32 stamp does not identify this artifact.
+        runtimeRequests.push(url.href);
+        return route.continue({ url: url.href });
+      });
+    }
 
     for (const caseSpec of cases) {
       // Headless Chromium cannot present real-WebGPU canvases (blank output),
@@ -159,7 +208,7 @@ export async function runRegression({
       const gate = resolveGate(caseSpec.gate);
       let captured;
       try {
-        captured = await captureCase(page, actualBaseUrl, caseSpec, { forceWebGL });
+        captured = await captureCase(page, actualBaseUrl, caseSpec, { forceWebGL, wasm: runtimeAssets ? "32" : wasm });
       } catch (error) {
         for (const capture of caseSpec.captures ?? [{ name: "default" }]) {
           entries.push({
@@ -173,7 +222,7 @@ export async function runRegression({
         continue;
       }
 
-      for (const { captureName, screenshotPath } of captured) {
+      for (const { captureName, screenshotPath, actualRuntime } of captured) {
         const baselinePath = path.join(caseSpec.caseDir, "baselines", `${captureName}.png`);
         if (updateBaselines) {
           await ensureDir(path.dirname(baselinePath));
@@ -208,6 +257,7 @@ export async function runRegression({
             captureName,
             status: "compared",
             mismatchRatio: diff.mismatchRatio,
+            actualRuntime,
             gate,
           });
         } else {
@@ -232,6 +282,10 @@ export async function runRegression({
   const report = {
     generatedAt: new Date().toISOString(),
     updateBaselines,
+    runtimeAssets,
+    wasm,
+    runtimeRequests,
+    runtimeBuild,
     pass: verdict.pass,
     entries,
     failures: verdict.failures,
@@ -293,8 +347,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const baseUrlIndex = args.indexOf("--base-url");
   const baseUrl = baseUrlIndex >= 0 ? args[baseUrlIndex + 1] : null;
+  const runtimeAssetsIndex = args.indexOf("--runtime-assets");
+  const runtimeAssets = runtimeAssetsIndex >= 0 ? args[runtimeAssetsIndex + 1] : null;
+  if (runtimeAssetsIndex >= 0 && !runtimeAssets) {
+    throw new Error("--runtime-assets requires a /localAssets/ path.");
+  }
 
-  const report = await runRegression({ updateBaselines, caseFilter, baseUrl });
+  const wasmIndex = args.indexOf("--wasm");
+  const wasm = wasmIndex >= 0 ? args[wasmIndex + 1] : "auto";
+  if (!["auto", "32", "64"].includes(wasm)) throw new Error("--wasm requires auto, 32, or 64.");
+  if (runtimeAssets && wasm !== "auto") throw new Error("Use --wasm or --runtime-assets, not both.");
+  const report = await runRegression({ updateBaselines, caseFilter, baseUrl, runtimeAssets, wasm });
   for (const entry of report.entries) {
     const label = `${entry.caseId}--${entry.captureName}`;
     if (entry.status === "compared") {

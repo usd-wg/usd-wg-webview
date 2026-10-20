@@ -1,0 +1,9 @@
+diff --git a/cmake/modules/MaterialXConfig.cmake.in b/cmake/modules/MaterialXConfig.cmake.in
+--- a/cmake/modules/MaterialXConfig.cmake.in
++++ b/cmake/modules/MaterialXConfig.cmake.in
+@@ -42,4 +42,4 @@ if(@MATERIALX_BUILD_RENDER@ AND @MATERIALX_INSTALL_RESOURCES@)
+-if(UNIX AND NOT APPLE)
++if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+     find_dependency(X11 REQUIRED COMPONENTS Xt)
+     if("RenderGlsl" IN_LIST MaterialX_FIND_COMPONENTS)
+         find_dependency(OpenGL REQUIRED)

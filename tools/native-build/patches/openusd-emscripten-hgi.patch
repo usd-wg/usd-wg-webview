@@ -1,0 +1,11 @@
+diff --git a/pxr/imaging/hgi/hgi.cpp b/pxr/imaging/hgi/hgi.cpp
+--- a/pxr/imaging/hgi/hgi.cpp
++++ b/pxr/imaging/hgi/hgi.cpp
+@@ -193,4 +193,7 @@ _MakeNewPlatformDefaultHgi()
+             "HgiMetal";
+         #elif defined(ARCH_OS_WINDOWS)
+             "HgiGL";
++        #elif defined(__EMSCRIPTEN__)
++            "";
++            return nullptr;
+         #else
