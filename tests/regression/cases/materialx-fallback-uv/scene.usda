@@ -1,0 +1,81 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Mesh "UvCube" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+        point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "faceVarying"
+        )
+        rel material:binding = </World/Materials/PreviewUv>
+    }
+
+    def Scope "Materials"
+    {
+        def Material "PreviewUv"
+        {
+            token outputs:surface.connect = </World/Materials/PreviewUv/Preview.outputs:surface>
+            token outputs:mtlx:surface.connect = </World/Materials/PreviewUv/PreviewMtlx.outputs:out>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Materials/PreviewUv/PreviewImage.outputs:rgb>
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+
+            def Shader "PreviewImage"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./letter-f.png@
+                float2 inputs:st.connect = </World/Materials/PreviewUv/PreviewSt.outputs:result>
+                token inputs:sourceColorSpace = "sRGB"
+                float3 outputs:rgb
+            }
+
+            def Shader "PreviewSt"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            # This unsupported MaterialX surface must fall back without flipping UVs.
+            def Shader "PreviewMtlx"
+            {
+                uniform token info:id = "ND_UsdPreviewSurface_surfaceshader"
+                color3f inputs:diffuseColor.connect = </World/Materials/PreviewUv/Image.outputs:out>
+                float inputs:specular_weight = 0
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color3"
+                asset inputs:file = @./letter-f.png@
+                float2 inputs:texcoord.connect = </World/Materials/PreviewUv/LookupSt.outputs:out>
+                string inputs:uaddressmode = "periodic"
+                string inputs:vaddressmode = "periodic"
+                color3f outputs:out
+            }
+
+            def Shader "LookupSt"
+            {
+                uniform token info:id = "ND_geompropvalue_vector2"
+                string inputs:geomprop = "st"
+                float2 outputs:out
+            }
+        }
+    }
+}

@@ -3,7 +3,7 @@
 // keeps the face-expansion, normal-welding, fingerprint, and MaterialX UV
 // orientation rules unit-testable.
 
-import { BufferGeometry, Float32BufferAttribute, Vector3 } from "three";
+import { BufferGeometry, Float32BufferAttribute, type Material, Vector3 } from "three";
 import type { RenderableMaterial, RenderableMesh } from "../usd/types";
 import { materialShouldUseTextureFallback } from "./materialXCompatibility";
 
@@ -126,21 +126,36 @@ function materialHasActiveMaterialX(material?: RenderableMaterial): boolean {
 }
 
 // The MaterialX V-flip. This is the single place UV orientation for
-// MaterialX-bound meshes is decided; regression case materialx-tiled
+// successfully compiled MaterialX materials is decided; regression case materialx-tiled
 // guards it with an orientation-asymmetric texture.
 export function applyMaterialXUvOptions(
   uvAttr: Float32BufferAttribute,
   renderable: RenderableMesh,
-  materialXFlipV: boolean
+  materialXFlipV: boolean,
+  renderedMaterials: Material | Material[]
 ): void {
-  if (!materialXFlipV || !renderableHasMaterialX(renderable) || renderableUsesTextureFallback(renderable)) {
-    return;
-  }
+  if (!materialXFlipV) return;
 
-  for (let index = 0; index < uvAttr.count; index += 1) {
-    uvAttr.setY(index, 1 - uvAttr.getY(index));
+  const materials = Array.isArray(renderedMaterials) ? renderedMaterials : [renderedMaterials];
+  const flipRange = (start: number, count: number, material?: Material) => {
+    if (material?.userData.webviewMaterialX !== true) return;
+    for (let index = start; index < Math.min(start + count, uvAttr.count); index += 1) {
+      uvAttr.setY(index, 1 - uvAttr.getY(index));
+    }
+    uvAttr.needsUpdate = true;
+  };
+  if (renderable.materialSubsets?.length) {
+    // Match applyGeometryGroups/createRenderableMaterials slot order. UVs are
+    // corner-expanded, so mixed materials can use different orientations.
+    const slots = new Map<string, number>();
+    for (const subset of renderable.materialSubsets) {
+      const key = getSubsetMaterialKey(subset.material, subset.path);
+      if (!slots.has(key)) slots.set(key, slots.size);
+      flipRange(subset.start, subset.count, materials[slots.get(key)!]);
+    }
+  } else {
+    flipRange(0, uvAttr.count, materials[0]);
   }
-  uvAttr.needsUpdate = true;
 }
 
 export function getSubsetMaterialKey(
@@ -215,6 +230,7 @@ export function getRenderableMaterialKey(
 
 export interface GeometryBuildOptions {
   materialXFlipV: boolean;
+  renderedMaterials: Material | Material[];
   warnTangents: (renderable: RenderableMesh, detail: string) => void;
 }
 
@@ -224,7 +240,7 @@ export function buildGeometry(renderable: RenderableMesh, opts: GeometryBuildOpt
   geo.setAttribute("position", new Float32BufferAttribute(faceExpandAttr(points, indices, 3), 3));
   if (uvs?.length) {
     const uvAttr = new Float32BufferAttribute(faceExpandAttr(uvs, indices, 2), 2);
-    applyMaterialXUvOptions(uvAttr, renderable, opts.materialXFlipV);
+    applyMaterialXUvOptions(uvAttr, renderable, opts.materialXFlipV, opts.renderedMaterials);
     geo.setAttribute("uv", uvAttr);
     geo.setAttribute("uv1", uvAttr.clone());
   }
@@ -238,8 +254,28 @@ export function buildGeometry(renderable: RenderableMesh, opts: GeometryBuildOpt
   return geo;
 }
 
-// Update only vertex positions on an existing geometry for animation frames.
-// Preserves UVs, normals/tangents re-computed from the original indexed topology.
+// Always start with authored UVs: material edits may switch either direction
+// between compiled MaterialX and standard fallback without changing topology.
+export function updateGeometryUvs(
+  geo: BufferGeometry,
+  renderable: RenderableMesh,
+  opts: GeometryBuildOptions
+): void {
+  if (renderable.uvs?.length) {
+    const uv = new Float32BufferAttribute(faceExpandAttr(renderable.uvs, renderable.indices, 2), 2);
+    if (geo.attributes.position?.count !== uv.count) return;
+    applyMaterialXUvOptions(uv, renderable, opts.materialXFlipV, opts.renderedMaterials);
+    geo.setAttribute("uv", uv);
+    geo.setAttribute("uv1", uv.clone());
+  } else {
+    geo.deleteAttribute("uv");
+    geo.deleteAttribute("uv1");
+  }
+  setExpandedVertexTangents(geo, renderable, opts);
+}
+
+// Update vertex positions on an existing geometry for animation frames.
+// Refresh UV orientation and normals/tangents from the current material choice.
 // Falls back to full rebuild only when vertex count changes (topology shift).
 export function updateGeometryPositions(
   geo: BufferGeometry,
@@ -249,18 +285,20 @@ export function updateGeometryPositions(
   const pos = faceExpandAttr(renderable.points as number[], renderable.indices as number[], 3);
   const posAttr = geo.attributes.position;
   if (posAttr && posAttr.count * 3 === pos.length) {
-    // Same vertex count — update in place, keep UVs untouched
+    // Same vertex count — update in place.
     (posAttr.array as Float32Array).set(pos);
     posAttr.needsUpdate = true;
     setExpandedVertexNormals(geo, renderable.points, renderable.indices, renderable.normals);
-    setExpandedVertexTangents(geo, renderable, opts);
+    updateGeometryUvs(geo, renderable, opts);
   } else {
-    // Topology changed — full rebuild, but salvage UVs from the old geometry
-    const savedUv = geo.attributes.uv;
-    const savedUv1 = geo.attributes.uv1;
+    // Topology changed — rebuild from current source data, never retain stale
+    // UVs/tangents from a previous material or differently sized corner stream.
     geo.dispose();
     const newGeo = buildGeometry(renderable, opts);
     // Copy attributes into the existing geometry object so the Mesh reference stays valid
+    for (const key of Object.keys(geo.attributes)) {
+      if (!newGeo.attributes[key]) geo.deleteAttribute(key);
+    }
     for (const key of Object.keys(newGeo.attributes)) {
       geo.setAttribute(key, newGeo.attributes[key]);
     }
@@ -269,8 +307,6 @@ export function updateGeometryPositions(
     for (const group of newGeo.groups) {
       geo.addGroup(group.start, group.count, group.materialIndex ?? 0);
     }
-    if (!geo.attributes.uv && savedUv) geo.setAttribute("uv", savedUv);
-    if (!geo.attributes.uv1 && savedUv1) geo.setAttribute("uv1", savedUv1);
   }
   geo.computeBoundingBox();
   geo.computeBoundingSphere();
@@ -338,17 +374,15 @@ function buildExpandedVertexTangents(
 
   const indexedGeometry = new BufferGeometry();
   try {
-    indexedGeometry.setAttribute("position", new Float32BufferAttribute(new Float32Array(points), 3));
+    // Split corners before choosing orientation, including vertices shared by
+    // MaterialX and standard subsets. Tangents must use the same UVs as drawing.
+    indexedGeometry.setAttribute("position", new Float32BufferAttribute(faceExpandAttr(points, indices, 3), 3));
 
-    const uvAttribute = new Float32BufferAttribute(new Float32Array(uvs), 2);
-    applyMaterialXUvOptions(uvAttribute, renderable, opts.materialXFlipV);
+    const uvAttribute = new Float32BufferAttribute(faceExpandAttr(uvs, indices, 2), 2);
+    applyMaterialXUvOptions(uvAttribute, renderable, opts.materialXFlipV, opts.renderedMaterials);
     indexedGeometry.setAttribute("uv", uvAttribute);
-    const indexedNormals =
-      normals && normals.length === points.length
-        ? normals
-        : buildIndexedVertexNormals(points, indices);
-    indexedGeometry.setAttribute("normal", new Float32BufferAttribute(indexedNormals, 3));
-    indexedGeometry.setIndex(Array.from(indices, (value) => Number(value)));
+    setExpandedVertexNormals(indexedGeometry, points, indices, normals);
+    indexedGeometry.setIndex(Array.from(indices, (_, index) => index));
     indexedGeometry.computeTangents();
 
     const tangent = indexedGeometry.getAttribute("tangent");
@@ -357,7 +391,7 @@ function buildExpandedVertexTangents(
       return null;
     }
 
-    return new Float32BufferAttribute(faceExpandAttr(tangent.array as ArrayLike<number>, indices, 4), 4);
+    return new Float32BufferAttribute(new Float32Array(tangent.array), 4);
   } catch (error) {
     console.warn("[USD WebView] Failed to compute tangents for mesh geometry", {
       path: renderable.path,

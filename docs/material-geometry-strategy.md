@@ -83,6 +83,10 @@ case (orientation-asymmetric letter texture) gates it. Meshes using the
 MaterialX EXR texture fallback keep authored UVs instead, because they render
 through standard texture slots rather than Three's MaterialX image nodes; see
 `src/viewer/materialXCompatibility.ts`.
+Compilation-failure and unavailable-renderer fallbacks also keep authored UVs.
+Orientation follows the selected render material rather than the existence of
+an authored MaterialX payload. Mixed subsets flip only MaterialX corner ranges;
+material refresh regenerates UVs and matching tangents from authored data.
 
 ### Stage edits
 

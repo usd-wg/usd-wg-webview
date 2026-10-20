@@ -1,7 +1,8 @@
-import { Float32BufferAttribute } from "three";
-import { describe, expect, it } from "vitest";
+import { Float32BufferAttribute, MeshPhysicalMaterial } from "three";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyMaterialXUvOptions,
+  buildGeometry,
   buildIndexedVertexNormals,
   faceExpandAttr,
   geometryFingerprint,
@@ -10,7 +11,11 @@ import {
   normalWeldKey,
   renderableHasMaterialX,
   renderableUsesTextureFallback,
+  updateGeometryUvs,
+  updateGeometryPositions,
 } from "../../src/viewer/GeometryBuilder";
+import { MaterialFactory } from "../../src/viewer/MaterialFactory";
+import { TextureCache } from "../../src/viewer/TextureCache";
 import type { RenderableMesh } from "../../src/usd/types";
 
 function mesh(overrides: Partial<RenderableMesh> = {}): RenderableMesh {
@@ -33,6 +38,9 @@ const exrMaterialX = {
   ),
 };
 const texture = { path: "base.exr", mimeType: "image/x-exr", data: new Uint8Array([1]) };
+const standardMaterial = new MeshPhysicalMaterial();
+const compiledMaterialX = new MeshPhysicalMaterial();
+compiledMaterialX.userData.webviewMaterialX = true;
 
 describe("faceExpandAttr", () => {
   it("copies stride-sized runs per index", () => {
@@ -156,25 +164,25 @@ describe("renderableHasMaterialX / material keys", () => {
 });
 
 describe("applyMaterialXUvOptions", () => {
-  it("flips V only for MaterialX renderables with flip enabled", () => {
+  it("flips V only for selected MaterialX render materials with flip enabled", () => {
     const make = () => new Float32BufferAttribute(new Float32Array([0, 0.25, 1, 0.75]), 2);
 
     const flipped = make();
-    applyMaterialXUvOptions(flipped, mesh({ material: { materialX: mtlx } }), true);
+    applyMaterialXUvOptions(flipped, mesh({ material: { materialX: mtlx } }), true, compiledMaterialX);
     expect(flipped.getY(0)).toBeCloseTo(0.75);
     expect(flipped.getY(1)).toBeCloseTo(0.25);
 
     const noMtlx = make();
-    applyMaterialXUvOptions(noMtlx, mesh(), true);
+    applyMaterialXUvOptions(noMtlx, mesh(), true, standardMaterial);
     expect(noMtlx.getY(0)).toBeCloseTo(0.25);
 
     const flipOff = make();
-    applyMaterialXUvOptions(flipOff, mesh({ material: { materialX: mtlx } }), false);
+    applyMaterialXUvOptions(flipOff, mesh({ material: { materialX: mtlx } }), false, compiledMaterialX);
     expect(flipOff.getY(0)).toBeCloseTo(0.25);
   });
 
-  it("does not flip shared mesh UVs when any subset uses EXR texture fallback", () => {
-    const uv = new Float32BufferAttribute(new Float32Array([0, 0.25, 1, 0.75]), 2);
+  it("flips only compiled MaterialX subset corners, preserving standard and EXR fallback subsets", () => {
+    const uv = new Float32BufferAttribute(new Float32Array([0, 0.25, 1, 0.75, 0, 0.5]), 2);
     const renderable = mesh({
       material: {
         path: "/Fallback",
@@ -182,14 +190,88 @@ describe("applyMaterialXUvOptions", () => {
         diffuseTexture: texture,
       },
       materialSubsets: [
-        { path: "/s", name: "s", start: 0, count: 3, material: { materialX: mtlx } },
+        { path: "/s", name: "s", start: 0, count: 1, material: { path: "/M", materialX: mtlx } },
+        { path: "/f", name: "f", start: 1, count: 1, material: { path: "/F", materialX: exrMaterialX, diffuseTexture: texture } },
+        { path: "/s2", name: "s2", start: 2, count: 1, material: { path: "/M", materialX: mtlx } },
       ],
     });
 
     expect(renderableHasMaterialX(renderable)).toBe(true);
     expect(renderableUsesTextureFallback(renderable)).toBe(true);
-    applyMaterialXUvOptions(uv, renderable, true);
-    expect(uv.getY(0)).toBeCloseTo(0.25);
+    applyMaterialXUvOptions(uv, renderable, true, [compiledMaterialX, standardMaterial]);
+    expect(uv.getY(0)).toBeCloseTo(0.75);
     expect(uv.getY(1)).toBeCloseTo(0.75);
+  });
+
+  it.each([true, false])("keeps authored UVs when compilation fails or the renderer is unavailable (WebGPU=%s)", async (webGpu) => {
+    const factory = new MaterialFactory(new TextureCache(), () => webGpu);
+    const parse = vi.spyOn(factory.materialXLoader, "parse").mockImplementation(() => {
+      throw new Error("Unsupported MaterialX node category");
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const renderable = mesh({uvs: [0, 0.25, 1, 0.25, 0, 0.75], material: {materialX: mtlx}});
+    try {
+      await factory.prepareMaterialXMaterials([renderable]);
+      const material = factory.createRenderableMaterials(renderable) as MeshPhysicalMaterial;
+      expect(parse).toHaveBeenCalledTimes(webGpu ? 1 : 0);
+      expect(material.userData.webviewMaterialX).not.toBe(true);
+      const geometry = buildGeometry(renderable, {
+        materialXFlipV: true, renderedMaterials: material, warnTangents: () => {},
+      });
+      expect([...geometry.attributes.uv.array]).toEqual(renderable.uvs);
+      geometry.dispose();
+      material.dispose();
+    } finally {
+      parse.mockRestore();
+      warning.mockRestore();
+      factory.dispose();
+    }
+  });
+
+  it("refreshes UVs, uv1 and tangent handedness when materials switch, without accumulating flips", () => {
+    const renderable = mesh({uvs: [0, 0.25, 1, 0.25, 0, 0.75], material: {materialX: mtlx}});
+    const options = {materialXFlipV: true, renderedMaterials: standardMaterial, warnTangents: () => {}};
+    const geometry = buildGeometry(renderable, options);
+    const authoredTangents = [...geometry.attributes.tangent.array];
+    options.renderedMaterials = compiledMaterialX;
+    updateGeometryUvs(geometry, renderable, options);
+    expect(geometry.attributes.uv.getY(0)).toBe(0.75);
+    expect(geometry.attributes.tangent.getW(0)).toBe(-authoredTangents[3]);
+    updateGeometryUvs(geometry, renderable, options);
+    expect(geometry.attributes.uv.getY(0)).toBe(0.75);
+    options.renderedMaterials = standardMaterial;
+    updateGeometryUvs(geometry, renderable, options);
+    updateGeometryPositions(geometry, {...renderable, points: [0, 0, 1, 1, 0, 1, 0, 1, 1]}, options);
+    expect([...geometry.attributes.uv.array]).toEqual(renderable.uvs);
+    expect([...geometry.attributes.uv1.array]).toEqual(renderable.uvs);
+    expect([...geometry.attributes.tangent.array]).toEqual(authoredTangents);
+    updateGeometryPositions(geometry, {...renderable, indices: [0, 1, 2, 0, 2, 1]}, options);
+    expect([...geometry.attributes.uv.array]).toEqual([0, 0.25, 1, 0.25, 0, 0.75, 0, 0.25, 0, 0.75, 1, 0.25]);
+    updateGeometryPositions(geometry, {...renderable, uvs: undefined}, options);
+    expect(geometry.attributes.uv).toBeUndefined();
+    expect(geometry.attributes.uv1).toBeUndefined();
+    expect(geometry.attributes.tangent).toBeUndefined();
+    geometry.dispose();
+  });
+
+  it("splits shared vertices for mixed-material UVs and tangent handedness", () => {
+    const renderable = mesh({
+      indices: [0, 1, 2, 0, 1, 2],
+      uvs: [0, 0.25, 1, 0.25, 0, 0.75],
+      materialSubsets: [
+        {path: "/m", name: "m", start: 0, count: 3, material: {materialX: mtlx}},
+        {path: "/s", name: "s", start: 3, count: 3},
+      ],
+    });
+    const geometry = buildGeometry(renderable, {
+      materialXFlipV: true,
+      renderedMaterials: [compiledMaterialX, standardMaterial],
+      warnTangents: () => {},
+    });
+    expect(geometry.attributes.uv.getY(0)).toBe(0.75);
+    expect(geometry.attributes.uv.getY(3)).toBe(0.25);
+    expect(geometry.attributes.tangent.getW(0)).toBe(-geometry.attributes.tangent.getW(3));
+    expect(geometry.groups.map(g => g.materialIndex)).toEqual([0, 1]);
+    geometry.dispose();
   });
 });
