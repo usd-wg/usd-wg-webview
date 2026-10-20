@@ -12,6 +12,8 @@
     "test:regression:bless": "node tests/regression/run.mjs --update-baselines",
     "materialx:fetch": "node tools/materialx/fetch-official-runtime.mjs",
     "native:stamp": "node tools/native-build/stamp-build.mjs",
+    "native:prepare": "node tools/native-build/prepare-sources.mjs",
+    "native:source": "bash tools/native-build/build-from-source.sh",
     "native:package": "node tools/native-build/package-runtimes.mjs",
     "native:verify": "node tools/native-build/package-runtimes.mjs --check",
     "test:artifacts": "node --test tests/native-build/*.test.mjs",

@@ -16,96 +16,37 @@ npm run preview         # serves the built site
 Use `npm run dev -- --port 8001` when another worktree occupies port 8000.
 The MaterialX-editor worktree and the WASM release worktree are independent.
 
-## Native-build prerequisites
+## Native builds: choose the right workflow
 
-- [Emscripten SDK (emsdk)](https://emscripten.org/docs/getting_started/downloads.html)
-- An OpenUSD WASM build (see below)
-- A native OpenUSD source checkout (needed for private headers not installed by the WASM SDK)
-- CMake 3.20+
-- Node.js + npm
-
-The following native steps are needed only when rebuilding bindings. For the
-complete dual-architecture SDK reconstruction, see [wasm-sdk.md](wasm-sdk.md).
-
-## 1. Build OpenUSD for WASM
-
-The current webview WASM module targets OpenUSD `v26.08` at commit
-`ee47c679abde5b467a7b6a41f3b2285564a4222e`. Follow the version-specific
-toolchain and component settings in [wasm-sdk.md](wasm-sdk.md); the stock WASM
-target disables imaging and MaterialX, which this project enables.
-
-Build OpenUSD using the version-specific command in [wasm-sdk.md](wasm-sdk.md).
-It includes the imaging and MaterialX settings required by this viewer.
-
-This produces static libraries and CMake config files under `/path/to/USD_WASM_Build`.
-
-## 2. Build the WASM bindings
-
-From the repository root:
+For a fresh machine, follow the [complete source-build runbook](wasm-sdk.md).
+It installs Emscripten 6.0.0, downloads pinned OpenUSD/MaterialX/OpenSubdiv/oneTBB
+sources, applies the checked-in patches, and builds both SDKs and bindings:
 
 ```sh
-source /path/to/emsdk/emsdk_env.sh
-
-# Override CMAKE_BIN when `cmake` is not already on PATH.
-export CMAKE_BIN="${CMAKE_BIN:-cmake}"
-
-emcmake $CMAKE_BIN -S native/usd-webview-bindings -B build/usd-webview-bindings \
-  -DCMAKE_BUILD_TYPE=Release \
-  -Dpxr_DIR=/path/to/USD_WASM_Build \
-  -DTBB_DIR=/path/to/USD_WASM_Build/lib/cmake/TBB \
-  -DUSD_WEBVIEW_OPENUSD_SOURCE_DIR=/path/to/OpenUSD \
-  -DCMAKE_INSTALL_PREFIX=$(pwd)/public/usd-webview-bindings
-
-$CMAKE_BIN --build build/usd-webview-bindings --target install -- -j$(sysctl -n hw.logicalcpu)
+# After installing the prerequisites/compiler in the runbook:
+export EMSDK_ROOT="$PWD/build/emsdk"
+npm run native:source
+npm run build
 ```
 
-`USD_WEBVIEW_OPENUSD_SOURCE_DIR` points at the OpenUSD **source** checkout. It is needed for private headers (e.g. `pxr/usd/sdf/usdzResolver.h`) that the WASM install does not include.
+CMake **3.27+**, Ninja, Python 3.10+, Git, Node.js 22+, and npm are required.
+All SDK source/build/install state defaults to ignored `build/wasm-sdk/`.
+No maintainer-local paths or pre-existing native SDK are required.
 
-This installs the generated module artifacts into `public/usd-webview-bindings/`:
-
-| File                            | Description                           |
-| ------------------------------- | ------------------------------------- |
-| `usdWebViewBindingsModule.js`   | Emscripten-generated JS glue          |
-| `usdWebViewBindingsModule.wasm` | Compiled OpenUSD WASM binary (~19 MB) |
-
-The browser-facing wrapper is currently maintained separately at:
-
-```text
-public/usd-webview-bindings/usdWebViewBindings.js
-```
-
-## 3. Run the frontend
+For **bindings-only** C++ changes with those SDKs already built:
 
 ```sh
-npm ci
-npm run dev
+export EMSDK_ROOT="$PWD/build/emsdk"
+bash tools/native-build/build-local-bindings.sh wasm32
+bash tools/native-build/build-local-bindings.sh wasm64
+npm run native:package -- public/localAssets/wasm64-runtime
+npm run build
 ```
 
-Open the URL printed by Vite. The runtime panel should report **ready** once the WASM module loads.
-
-Use `npm ci` to install the exact locked frontend dependencies, including the
-pinned upstream Three.js dev snapshot and the checked-in official MaterialX
-JavaScript/WASM validation runtime.
-
-## Rebuilding after C++ changes
-
-Re-run the `cmake --build` and install step from section 2. The `emcmake cmake` configure step only needs to be re-run when CMake variables change.
-
-```sh
-source /path/to/emsdk/emsdk_env.sh
-export CMAKE_BIN="${CMAKE_BIN:-cmake}"
-$CMAKE_BIN --build build/usd-webview-bindings --target install -- -j$(sysctl -n hw.logicalcpu)
-```
-
-Then stamp the browser cache-bust ids before reloading the app:
-
-```sh
-npm run native:stamp
-```
-
-This is required after every native rebuild, or the browser can keep serving an
-older wrapper or WASM binary and make a native fix look like it failed.
-`npm run native:build` runs the cmake install step and the stamp in one go.
+Both scripts configure the correct architecture/dependencies, build/install,
+and stamp the pair. Do not release a shared C++ change with only one variant
+rebuilt. The low-level `npm run native:build` command rebuilds/stamps **only
+WASM32** and requires an existing binding CMake configuration.
 
 ## Rebuilding after JS wrapper changes
 
@@ -131,14 +72,11 @@ It rewrites:
   `_wrapperBuildId`)
 - `src/usd/generated/buildId.ts` (`WASM_BUILD_NAME`, imported by
   `UsdWebViewRuntime.ts`)
+- `public/usd-webview-bindings/build.json` (the WASM32 pair's hash record)
 - The WASM32 entry in `public/usd-webview-bindings/runtimes.json`, if packaged.
 
-Recommended rebuild loop:
-
-```sh
-source /path/to/emsdk/emsdk_env.sh
-npm run native:build   # cmake --build ... --target install && native:stamp
-```
+The two binding scripts run their architecture's stamping step automatically.
+Use the dual-architecture rebuild loop above for shared native changes.
 
 ## Dual-runtime packaging and deployment
 

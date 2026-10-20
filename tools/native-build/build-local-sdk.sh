@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
-# Run in the isolated experiment worktree, with dependency sources prepared
-# as described in docs/wasm-sdk.md. Never installs into the old shared SDK.
+# Build one pinned SDK. Run native:prepare first; see docs/wasm-sdk.md.
 set -euo pipefail
 
-viewer_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-lab_root="${USD_WASM_LAB_ROOT:-$(dirname "$viewer_root")}"
-: "${EMSDK_ROOT:?Set EMSDK_ROOT to the existing Emscripten SDK directory}"
-# emsdk_env.sh is not nounset-clean on every release.
-set +u
-source "$EMSDK_ROOT/emsdk_env.sh"
-set -u
-export EM_CACHE="$lab_root/emscripten-cache"
-export CCACHE_DIR="$lab_root/ccache"
+source "$(dirname "${BASH_SOURCE[0]}")/sdk-environment.sh"
+node "$viewer_root/tools/native-build/prepare-sources.mjs" --check
 
 arch="${1:-wasm32}"
 case "$arch" in
@@ -30,11 +22,10 @@ mtlx_source="$sources/MaterialX-22f1c433"
 usd_install="$install_root/usd"
 mtlx_install="$install_root/materialx"
 
-test "$(git -C "$usd_source" rev-parse HEAD)" = ee47c679abde5b467a7b6a41f3b2285564a4222e
-test "$(git -C "$mtlx_source" rev-parse HEAD)" = 22f1c433e71f49a541a15c4b1f5f9084b97be226
 mkdir -p "$build_root" "$install_root"
 
 common=(-G Ninja -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_INSTALL_LIBDIR=lib
   "-DCMAKE_C_FLAGS=$flags" "-DCMAKE_CXX_FLAGS=$flags"
   -DCMAKE_HAVE_LIBC_PTHREAD=1 -DTHREADS_HAVE_PTHREAD_ARG=ON)
 
@@ -86,4 +77,4 @@ emcmake cmake -S "$usd_source" -B "$build_root/openusd" "${common[@]}" \
 cmake --build "$build_root/openusd" --target install --parallel "$jobs"
 
 echo "SDK ready: $usd_install"
-echo "Bindings have not been installed; configure the isolated viewer separately."
+echo "Next: bash tools/native-build/build-local-bindings.sh $arch"

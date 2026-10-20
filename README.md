@@ -134,7 +134,7 @@ and [wasm-sdk.md](docs/wasm-sdk.md#selection-verification) for fallback tests.
 ## Documentation
 
 - [Building](docs/building.md) — Prerequisites and build instructions for the WASM bindings and frontend
-- [WASM SDK](docs/wasm-sdk.md) — Pinned sources, dual-architecture reconstruction, runtime options, memory metrics and testing limits
+- [WASM SDK](docs/wasm-sdk.md) — Fresh-machine setup and `npm run native:source` to build both runtimes from pinned sources, plus runtime options and memory metrics
 - [Lighting](docs/lighting.md) — USDLux translation, WebGL/WebGPU behavior, gizmos, editable attributes, and limitations
 - [Material and Geometry Strategy](docs/material-geometry-strategy.md) — Unified stage-driver geometry, authored-material payloads, and known rendering constraints
 - [USD Material Fidelity](tools/usd-material-fidelity/README.md) — Opt-in MaterialX/USD shaderball fidelity harness, setup, and current baseline

@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-viewer_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-lab_root="${USD_WASM_LAB_ROOT:-$(dirname "$viewer_root")}"
-: "${EMSDK_ROOT:?Set EMSDK_ROOT to the Emscripten SDK used for the SDK build}"
-set +u
-source "$EMSDK_ROOT/emsdk_env.sh"
-set -u
-export EM_CACHE="$lab_root/emscripten-cache"
-export CCACHE_DIR="$lab_root/ccache"
+source "$(dirname "${BASH_SOURCE[0]}")/sdk-environment.sh"
+node "$viewer_root/tools/native-build/prepare-sources.mjs" --check
 export CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS:-8}"
 arch="${1:-wasm32}"
 case "$arch" in
