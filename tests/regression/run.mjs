@@ -7,6 +7,7 @@
 //   node tests/regression/run.mjs --update-baselines
 //   node tests/regression/run.mjs --case variants --case payload-toggle
 //   node tests/regression/run.mjs --base-url http://127.0.0.1:8000
+//   node tests/regression/run.mjs --base-url http://127.0.0.1:8001 --runtime-assets /localAssets/wasm64-runtime/
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -116,7 +117,11 @@ export async function runRegression({
   updateBaselines = false,
   caseFilter = [],
   baseUrl = null,
+  runtimeAssets = null,
 } = {}) {
+  if (runtimeAssets && (!runtimeAssets.startsWith("/localAssets/") || updateBaselines)) {
+    throw new Error("Experimental runtime assets must be under /localAssets/ and cannot bless baselines.");
+  }
   await fs.rm(RESULTS_ROOT, { recursive: true, force: true });
   await ensureDir(RESULTS_ROOT);
 
@@ -139,9 +144,17 @@ export async function runRegression({
   });
 
   const entries = [];
+  const runtimeRequests = [];
+  let runtimeBuild = null;
   try {
     if (server) {
       await waitForHttpReady(actualBaseUrl, CAPTURE.timeoutMs);
+    }
+    if (runtimeAssets) {
+      const response = await fetch(new URL(`${runtimeAssets.replace(/\/$/, "")}/build.json`, actualBaseUrl));
+      if (!response.ok) throw new Error("Experimental runtime build.json is unavailable.");
+      runtimeBuild = await response.json();
+      console.info(`[runtime override] ${runtimeBuild.buildId}`);
     }
     const page = await browser.newPage({
       viewport: { width: CAPTURE.viewportWidth, height: CAPTURE.viewportHeight },
@@ -150,6 +163,18 @@ export async function runRegression({
     page.on("pageerror", (error) => {
       console.warn(`[page error] ${error.message}`);
     });
+    if (runtimeAssets) {
+      // Test-only override: exercise the same maintained wrapper and frontend
+      // with alternate generated glue/WASM. This is not production selection.
+      await page.route(/\/usd-webview-bindings\/usdWebViewBindingsModule\.(js|wasm)(\?|$)/, route => {
+        const url = new URL(route.request().url());
+        const filename = url.pathname.split("/").at(-1);
+        url.pathname = `${runtimeAssets.replace(/\/$/, "")}/${filename}`;
+        url.search = ""; // The wrapper's normal WASM32 stamp does not identify this artifact.
+        runtimeRequests.push(url.href);
+        return route.continue({ url: url.href });
+      });
+    }
 
     for (const caseSpec of cases) {
       // Headless Chromium cannot present real-WebGPU canvases (blank output),
@@ -232,6 +257,9 @@ export async function runRegression({
   const report = {
     generatedAt: new Date().toISOString(),
     updateBaselines,
+    runtimeAssets,
+    runtimeRequests,
+    runtimeBuild,
     pass: verdict.pass,
     entries,
     failures: verdict.failures,
@@ -293,8 +321,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const baseUrlIndex = args.indexOf("--base-url");
   const baseUrl = baseUrlIndex >= 0 ? args[baseUrlIndex + 1] : null;
+  const runtimeAssetsIndex = args.indexOf("--runtime-assets");
+  const runtimeAssets = runtimeAssetsIndex >= 0 ? args[runtimeAssetsIndex + 1] : null;
+  if (runtimeAssetsIndex >= 0 && !runtimeAssets) {
+    throw new Error("--runtime-assets requires a /localAssets/ path.");
+  }
 
-  const report = await runRegression({ updateBaselines, caseFilter, baseUrl });
+  const report = await runRegression({ updateBaselines, caseFilter, baseUrl, runtimeAssets });
   for (const entry of report.entries) {
     const label = `${entry.caseId}--${entry.captureName}`;
     if (entry.status === "compared") {

@@ -6,6 +6,214 @@ This document records the full OpenUSD + MaterialX + WebAssembly build pipeline 
 
 The goal is to make it possible to recreate the entire WASM SDK from scratch on a new machine without reverse-engineering old build artifacts.
 
+## Isolated local SDK experiment
+
+As checked on 2026-10-20, the latest stable upstream release is `v26.08`
+(`ee47c679abde5b467a7b6a41f3b2285564a4222e`). `v26.11-rc1` is a release
+candidate and is not the baseline for this experiment.
+
+The existing local `USD_WASM_Build` was built from OpenUSD 26.05; the release
+named in repository documentation does not establish the version of a local
+SDK. Inspect its source revision and CMake cache before reusing it.
+
+The local experiment uses a separate `experiment/wasm64` viewer worktree.
+Its sibling directories are:
+
+```text
+wasm64-lab/
+  viewer/                         # isolated Git worktree
+  sources/
+    OpenUSD-v26.08/                # pinned release checkout
+    MaterialX-22f1c433/            # pinned 1.39.6 development revision
+    OpenSubdiv-3_6_1/
+    oneTBB-2021.12.0/
+  build/wasm32/                   # per-component CMake directories
+  install/wasm32/materialx/
+  install/wasm32/usd/
+  emscripten-cache/
+  ccache/
+```
+
+`wasm64` builds use separate `build/wasm64` and `install/wasm64` directories.
+First establish a working WASM32 baseline from the current stable OpenUSD;
+only then run WASM64 comparisons. The script supports both architectures,
+but that alone does not establish that the WASM64 SDK builds or runs.
+
+Sources are OpenUSD at the revision above, MaterialX at
+`22f1c433e71f49a541a15c4b1f5f9084b97be226`, and the unmodified upstream archives
+for OpenSubdiv 3.6.1 and oneTBB 2021.12.0. The local archive SHA-256 values are:
+
+| Archive | SHA-256 |
+| --- | --- |
+| `OpenSubdiv-v3_6_1.zip` | `f2a42d8af5b3e1d51b9d6b243c1c3bac9d6044e3715cd19968723b49231039cc` |
+| `v2021.12.0.zip` | `fe6ca052b5bdd2c6e0616b360c9b0dcbcc46e01bbd0aa8fd0517c17fc58931db` |
+
+Apply the two source adjustments documented below: MaterialX's generated
+config must skip X11 under Emscripten, and OpenUSD HGI needs the no-backend
+Emscripten branch. Keep these in the isolated checkouts; do not modify the
+working SDK sources.
+
+From the isolated viewer worktree, with Emscripten 6.0.0 installed:
+
+```sh
+EMSDK_ROOT=/path/to/emsdk BUILD_JOBS=8 \
+  bash tools/native-build/build-local-sdk.sh wasm32
+```
+
+The script verifies both Git revisions, builds all four components, and
+installs only into the experiment. `USD_WASM_LAB_ROOT` can override the
+default parent of the viewer worktree. Set `EM_CACHE` **after** sourcing
+`emsdk_env.sh`, which clears existing Emscripten variables. Keep `CCACHE_DIR`
+inside the experiment as well.
+
+For WASM32, omit `-sMEMORY64` entirely. Emscripten 6.0.0's CMake toolchain
+matches the presence of `MEMORY64` rather than its value: `-sMEMORY64=0`
+incorrectly marks generated CMake package metadata as 64-bit even though the
+compiler produces WASM32 objects. This makes TBB package-version checks fail
+in the viewer configure. WASM64 uses `-sMEMORY64=1` in both C and C++ flags.
+
+Configure viewer bindings against that new SDK using the workflow in
+[building.md](building.md), install into the isolated viewer's `public/`, and
+run `npm run native:build` so artifact IDs are derived from actual content.
+For the fresh 26.08 SDK, also pass
+`-DOpenSubdiv_DIR=<lab>/install/wasm32/usd/lib/cmake/OpenSubdiv`:
+`pxrConfig.cmake` now resolves OpenSubdiv as a config dependency, and the
+Emscripten package search does not automatically search an arbitrary sibling
+SDK prefix.
+Do not replace the active MaterialX editor's binaries while validating this
+baseline.
+
+For subsequent memory testing, distinguish a >2 GiB file from >2 GiB runtime
+memory. A useful WASM64 test must allocate and access addresses above 4 GiB,
+in addition to realistic scene tests that measure native, JavaScript, and
+GPU memory. Large files should be local generated assets, not Git fixtures.
+
+### Baseline comparison and Memory64 probe
+
+Before installing the newly built viewer binary, the existing upstream WASM32
+artifact passed all 22 original captures in local Chromium. The additional
+`usdpreview-uv` fixture was copied from the uncommitted material graph editor
+work for diagnostic comparison: upstream already fails that fixture
+(`mismatchRatio=0.051581`). Do not bless that failure or interpret it as a
+new SDK regression. Keep the pre-rebuild report and images outside the
+runner's output directory, since the runner replaces its results each run.
+
+`tools/native-build/memory64-probe.cpp` is a standalone address-width and
+Embind test, separate from OpenUSD. After establishing the upgraded WASM32
+baseline, compile it with the same Emscripten toolchain:
+
+```sh
+# Set EM_CACHE after sourcing emsdk_env.sh, as above.
+mkdir -p public/localAssets/wasm64-probe
+em++ tools/native-build/memory64-probe.cpp \
+  --bind --no-entry -O2 -sMEMORY64=1 -sWASM_BIGINT=1 \
+  -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=8589934592 \
+  -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web \
+  -o public/localAssets/wasm64-probe/probe.mjs
+npm run dev -- --port 8001
+# In another shell:
+node tools/native-build/run-memory64-probe.mjs http://127.0.0.1:8001
+```
+
+The test accesses both sides of 4 GiB, checks for truncated-pointer aliasing,
+copies a typed array from an address above 4 GiB through Embind, explicitly
+grows memory, and checks that the JavaScript-owned copy survives. It touches
+one byte per 64 KiB plus boundary sentinels: this verifies addressing but does
+not establish multi-gigabyte physical residency or a supported scene-size
+limit. It must pass before treating a successful WASM64 compile as useful
+browser support.
+
+Local results on Chromium 149.0.7827.55:
+
+- Fresh OpenUSD 26.08 WASM32 viewer: `wasm-4fd717ab0650`; all 22 original
+  visual captures pass, with the same mismatch ratios as the upstream
+  artifact. The additional editor UV fixture retains its pre-existing
+  `0.051581` mismatch.
+- Standalone Memory64 probe: 8-byte pointers, high address `4295038400`,
+  heap growth from `4295163904` to `4462936064` bytes, correct boundary
+  sentinels and sparse reads, and the copied array survives growth.
+
+For a full SDK experiment, run `build-local-sdk.sh wasm64`. Configure the
+viewer bindings into a separate build directory with
+`-sMEMORY64=1` in C/C++ and linker flags, and an explicit 8 GiB
+`MAXIMUM_MEMORY`. Install the generated glue and WASM under
+`public/localAssets/wasm64-runtime/`.
+
+The companion binding script supplies those settings:
+
+```sh
+EMSDK_ROOT=/path/to/emsdk bash tools/native-build/build-local-bindings.sh wasm32
+EMSDK_ROOT=/path/to/emsdk bash tools/native-build/build-local-bindings.sh wasm64
+```
+
+WASM32 uses the normal mandatory `native:build`/stamp workflow. WASM64 writes
+a content-derived `build.json` identifying both generated files, without
+changing the normal viewer's cache IDs.
+
+The visual runner has a **test-only** `--runtime-assets` override:
+
+```sh
+npm run test:regression -- --base-url http://127.0.0.1:8001 \
+  --runtime-assets /localAssets/wasm64-runtime/
+```
+
+This redirects requests for generated glue and WASM to the experimental
+pair while reusing the same maintained wrapper and frontend. It records the
+replacement URLs in its report and disallows baseline updates. Normal
+viewer startup continues to load the freshly rebuilt WASM32 runtime;
+automatic architecture selection and dual-variant production packaging are
+not implemented by this test override. The normal on-screen build stamp
+still identifies WASM32; use the test report and artifact hashes for the
+experimental runtime's identity.
+
+### Full SDK experiment results
+
+Both complete SDKs and viewer bindings build with the pinned sources and
+Emscripten 6.0.0. No additional OpenUSD source patches were needed for WASM64
+beyond the HGI adjustment shared with WASM32.
+
+| Artifact | WASM32 | WASM64 |
+| --- | ---: | ---: |
+| WASM bytes | 19,904,761 | 20,554,061 |
+| Gzip bytes (Node default compression) | 4,148,438 | 4,303,444 |
+| Declared maximum linear memory | 2 GiB | 8 GiB |
+
+The experimental WASM64 pair is `experiment-c55dd244a25b`, with WASM SHA-256
+`8f88507689b3257032df9b5690db72bc9e8b80559541ae4b434b5129b14e4e46`.
+Binary inspection confirms a Memory64 declaration (memory flags `5`), versus
+flags `1` for the WASM32 baseline.
+
+In Chromium 149.0.7827.55, all 22 original captures pass for WASM64. All 23
+captured images, including the pre-existing editor UV fixture failure, are
+pixel-identical between the rebuilt WASM32 and WASM64 runtimes. The report
+records requests redirected to the experimental glue and WASM, and includes
+the pair's build manifest. No baselines were updated.
+
+The complete gate still reports failure because `usdpreview-uv` was
+deliberately retained as a diagnostic fixture. This is not a fully green
+expanded suite. Its failure is unchanged across the original upstream
+WASM32 binary, the rebuilt 26.08 WASM32 binary, and WASM64.
+
+Local evidence resides beside the isolated viewer:
+
+- `wasm32-sdk-rebuild.log`, `wasm64-sdk-build.log`
+- `wasm32-bindings-build.log`, `wasm64-bindings-build.log`
+- `wasm32-upstream-regression/`, `wasm32-rebuilt-regression/`,
+  `wasm64-regression/` (reports and captured images)
+- `memory64-probe-result.log`
+
+The 55 unit tests and production frontend build also pass. These checks
+establish local build/render feasibility, not a supported large-scene limit:
+the >4 GiB address test uses a standalone Embind module, and the full USD
+runtime has so far rendered the small regression scenes. Realistic
+high-residency USD tests, other browsers, and production selection/fallback
+remain future work.
+
+The editor-dependent `usdpreview-uv` diagnostic fixture is preserved outside
+the viewer at `<lab>/diagnostics/usdpreview-uv-editor/`, alongside the saved
+reports. It is not part of the experiment's default regression gate: its
+native graph-translation prerequisites belong to the separate editor work.
+
 ---
 
 # Repository Layout
