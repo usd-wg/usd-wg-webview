@@ -169,6 +169,7 @@ app.innerHTML = `
       <div class="status-bar" id="statusBar" role="status" aria-live="polite">
         <span class="status-spinner" id="statusSpinner" hidden></span>
         <span class="status-mode" id="materialXModeLabel" hidden>Experimental MaterialX / WebGPU</span>
+        <span class="status-mode" id="runtimeArchitectureLabel" hidden></span>
         <span class="status-mode" id="splatDegradationLabel" hidden>Gaussian splats are not rendered with MaterialX content (SparkJS is WebGL-only)</span>
         <span class="status-label" id="statusLabel">Idle</span>
       </div>
@@ -208,6 +209,14 @@ app.innerHTML = `
       <button class="stats-close" id="statsClose" aria-label="Close">&times;</button>
     </div>
     <div class="stats-body">
+      <p class="stats-section-title">Input &amp; Load</p>
+      <dl id="loadMetrics" class="status-list"></dl>
+      <p class="stats-section-title">Memory &amp; Runtime</p>
+      <dl id="memoryMetrics" class="status-list"></dl>
+      <p class="stats-note">Live sample every second while open; synchronous USD work can pause updates. Memory categories overlap; do not add them. WASM capacity is not physical RAM usage. Native peak resets per load and is sampled, not an allocation high-water mark. JS heap figures are browser-dependent and exclude some external buffers.</p>
+      <p class="stats-section-title">Live Renderer</p>
+      <dl id="resourceMetrics" class="status-list"></dl>
+      <p class="stats-note">Texture size is an RGBA8 base-level estimate for known textures only, excluding mipmaps, render targets and private shader resources. Renderer-tracked bytes are available on supported backends, not measured GPU VRAM. Total browser-process RAM is unavailable. CPU geometry inventory excludes splat-private buffers.</p>
       <p class="stats-section-title">USD Stage</p>
       <dl id="usdStageSummary" class="status-list"></dl>
       <p class="stats-section-title">Renderer</p>
@@ -264,6 +273,7 @@ export const playbarEnd = requireElement(app.querySelector<HTMLElement>("#playba
 export const playbarScrubber = requireElement(app.querySelector<HTMLInputElement>("#playbarScrubber"));
 export const statusSpinner = requireElement(app.querySelector<HTMLElement>("#statusSpinner"));
 export const statusLabel = requireElement(app.querySelector<HTMLElement>("#statusLabel"));
+export const runtimeArchitectureLabel = requireElement(app.querySelector<HTMLElement>("#runtimeArchitectureLabel"));
 export const materialXModeLabel = requireElement(app.querySelector<HTMLElement>("#materialXModeLabel"));
 export const splatDegradationLabel = requireElement(app.querySelector<HTMLElement>("#splatDegradationLabel"));
 export const sceneGraphList = requireElement(app.querySelector<HTMLElement>("#sceneGraphList"));

@@ -1,13 +1,29 @@
 #include "webviewCommon.h"
 
 #include <emscripten/bind.h>
+#include <emscripten/heap.h>
+#include <malloc.h>
 
 using namespace usdwebview;
+
+static emscripten::val GetMemoryStats()
+{
+    const auto info = mallinfo();
+    auto result = emscripten::val::object();
+    // JS Numbers preserve these byte counts exactly; do not narrow size_t to
+    // a 32-bit integer or expose a WASM64-only BigInt API.
+    result.set("capacityBytes", double(emscripten_get_heap_size()));
+    result.set("maximumBytes", double(emscripten_get_heap_max()));
+    result.set("allocatedBytes", double(info.uordblks));
+    result.set("allocatorFreeBytes", double(info.fordblks));
+    return result;
+}
 
 // SPIKE (Phase 3 entry gates S1-S3) — removed when WebViewStageDriver lands.
 EMSCRIPTEN_BINDINGS(usdWebViewBindings)
 {
     emscripten::function("InitializeRuntime", &InitializeRuntime);
+    emscripten::function("GetMemoryStats", &GetMemoryStats);
     emscripten::function("CloseStage", &CloseStage);
     emscripten::function("CreateStageDriver", &CreateStageDriver);
     emscripten::function("DeleteStageDriver", &DeleteStageDriver);

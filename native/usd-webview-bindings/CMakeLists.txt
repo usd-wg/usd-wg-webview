@@ -32,6 +32,10 @@ add_executable(usdWebViewBindingsModule
 )
 
 target_compile_features(usdWebViewBindingsModule PRIVATE cxx_std_17)
+# Emscripten's size_t-safe mallinfo declaration lives in its compatibility
+# include directory (the regular musl malloc.h omits it).
+set_source_files_properties(src/bindings.cpp PROPERTIES
+    COMPILE_OPTIONS "-isystem;${EMSCRIPTEN_SYSROOT}/include/compat")
 target_compile_options(usdWebViewBindingsModule PRIVATE -fPIC)
 target_include_directories(usdWebViewBindingsModule PRIVATE ${USD_WEBVIEW_OPENUSD_SOURCE_DIR})
 

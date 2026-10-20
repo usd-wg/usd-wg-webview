@@ -1,0 +1,13 @@
+{
+  "buildId": "experiment-ebc596ebad91",
+  "artifacts": {
+    "usdWebViewBindingsModule.js": {
+      "bytes": 143580,
+      "sha256": "ebaf7679bb1dbac0a090fcaaf5393d1572c042ab90caa64db7f61cc6c91b2874"
+    },
+    "usdWebViewBindingsModule.wasm": {
+      "bytes": 20554717,
+      "sha256": "6b0c176ec9abbb5284e5474619fb03c955d13a742729928e50ce6d112d8beb6a"
+    }
+  }
+}

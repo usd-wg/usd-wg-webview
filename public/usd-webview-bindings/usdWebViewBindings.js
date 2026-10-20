@@ -1,5 +1,5 @@
-const _wasmBuildId = "wasm-4fd717ab0650"; // stamped by tools/native-build/stamp-build.mjs
-const _wrapperBuildId = "wasm-4fd717ab0650";
+const _wasmBuildId = "wasm32-63cf7b54e36f"; // stamped by tools/native-build/stamp-build.mjs
+const _wrapperBuildId = "wasm32-63cf7b54e36f";
 
 function normalizePath(path) {
   return `/${String(path).replace(/^\/+/, "")}`;
@@ -35,9 +35,10 @@ function ensureDirectory(module, path) {
 window.UsdWebViewBindings = {
   async createRuntime(options = {}) {
     const { default: createUsdWebViewBindingsModule } =
-      await import(`./usdWebViewBindingsModule.js?v=${_wasmBuildId}`);
+      await import(options.runtimeModule?.moduleUrl ?? `./usdWebViewBindingsModule.js?v=${_wasmBuildId}`);
     const module = await createUsdWebViewBindingsModule({
       locateFile(path) {
+        if (path.endsWith(".wasm") && options.runtimeModule) return options.runtimeModule.wasmUrl;
         const base = options.locateFile?.(path) ?? path;
         return path.endsWith(".wasm") ? `${base}?v=${_wasmBuildId}` : base;
       },
@@ -117,6 +118,21 @@ window.UsdWebViewBindings = {
 
     return {
       ready: Promise.resolve(),
+      getMemoryStats() {
+        let originalBytes = 0;
+        let importedFileBytes = 0;
+        for (const [path, data] of _originalLayerData) {
+          originalBytes += data.byteLength;
+          const entry = module.FS_analyzePath(path);
+          if (entry.exists) importedFileBytes += entry.object.usedBytes ?? 0;
+        }
+        return {
+          ...module.GetMemoryStats?.(),
+          originalBytes,
+          importedFileBytes,
+          importedFileCount: _originalLayerData.size,
+        };
+      },
       createDataFile(path, data) {
         const filePath = normalizePath(path);
         if (!_originalLayerData.has(filePath)) {

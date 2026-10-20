@@ -2,11 +2,14 @@ name: test
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/wasm64-runtime]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  unit:
+  package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,8 +18,44 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm run test:unit
+      - run: npm run test:artifacts
+      # Both prebuilt native pairs are verified; no local SDK or ignored lab
+      # directory is needed. Build creates one site with selective loading.
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viewer-dist
+          path: dist/
+          if-no-files-found: error
 
   regression:
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        wasm: ["32", "64"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: viewer-dist
+          path: dist/
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:dist -- ${{ matrix.wasm }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-wasm${{ matrix.wasm }}
+          path: test-results/regression/results/
+          if-no-files-found: ignore
+
+  selection-and-stats:
+    needs: package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,14 +63,26 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      # The committed wasm under public/ is the artifact under test; the
-      # regression runner spins up Vite + headless Chromium and gates
-      # screenshots of tests/regression/cases against their baselines.
+      - uses: actions/download-artifact@v4
+        with:
+          name: viewer-dist
+          path: dist/
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:regression
-      - if: failure()
+      - run: npm run test:dist -- smoke
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: regression-diffs
-          path: test-results/regression/results/
+          name: stats-screenshots
+          path: /tmp/usd-stats-wasm*.png
           if-no-files-found: ignore
+
+  release-ready:
+    if: always()
+    needs: [package, regression, selection-and-stats]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node -e 'if (!Object.values(JSON.parse(process.env.JOB_RESULTS)).every(job => job.result === "success")) process.exit(1)'
+          echo "Both runtime variants and startup fallback passed against viewer-dist."

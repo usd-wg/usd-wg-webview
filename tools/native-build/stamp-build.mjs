@@ -4,14 +4,15 @@
 //      (_wasmBuildId / _wrapperBuildId)
 //   2. src/usd/generated/buildId.ts (imported by UsdWebViewRuntime.ts)
 //
-// The id is wasm-<first 12 hex of sha256(wasm)> so identical rebuilds are
-// no-ops and any binary change is a guaranteed cache bust.
+// Hash the WASM, generated glue and maintained wrapper (excluding stamped
+// lines). A glue-only repair must invalidate caches too.
 //
 // Usage: node tools/native-build/stamp-build.mjs
 
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { describePair } from "./artifacts.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 const WASM_PATH = path.join(REPO_ROOT, "public", "usd-webview-bindings", "usdWebViewBindingsModule.wasm");
@@ -19,10 +20,9 @@ const WRAPPER_PATH = path.join(REPO_ROOT, "public", "usd-webview-bindings", "usd
 const BUILD_ID_TS_PATH = path.join(REPO_ROOT, "src", "usd", "generated", "buildId.ts");
 
 export async function stampBuild() {
+  const pair = await describePair(path.dirname(WASM_PATH));
+  if (pair.architecture !== "wasm32") throw new Error("Default binding directory must contain WASM32.");
   const wasmBytes = await fs.readFile(WASM_PATH);
-  const digest = crypto.createHash("sha256").update(wasmBytes).digest("hex").slice(0, 12);
-  const buildId = `wasm-${digest}`;
-
   const wrapper = await fs.readFile(WRAPPER_PATH, "utf8");
   const lines = wrapper.split("\n");
   if (!lines[0]?.includes("_wasmBuildId") || !lines[1]?.includes("_wrapperBuildId")) {
@@ -30,6 +30,11 @@ export async function stampBuild() {
       `${WRAPPER_PATH} does not start with the _wasmBuildId/_wrapperBuildId lines this script expects.`
     );
   }
+  const glue = await fs.readFile(WASM_PATH.replace(/\.wasm$/, ".js"));
+  const digest = crypto.createHash("sha256")
+    .update(wasmBytes).update(glue).update(lines.slice(2).join("\n"))
+    .digest("hex").slice(0, 12);
+  const buildId = `wasm32-${digest}`;
   lines[0] = `const _wasmBuildId = "${buildId}"; // stamped by tools/native-build/stamp-build.mjs`;
   lines[1] = `const _wrapperBuildId = "${buildId}";`;
   await fs.writeFile(WRAPPER_PATH, lines.join("\n"), "utf8");
@@ -42,6 +47,25 @@ export async function stampBuild() {
     "utf8"
   );
 
+  await fs.writeFile(path.join(path.dirname(WASM_PATH), "build.json"),
+    `${JSON.stringify({ buildId, ...pair }, null, 2)}\n`);
+
+  // Keep a dual-runtime package coherent after a WASM32 rebuild.
+  const manifestPath = path.join(REPO_ROOT, "public/usd-webview-bindings/runtimes.json");
+  try {
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+    if (manifest.version !== 1 || manifest.wasm32?.architecture !== "wasm32") {
+      throw new Error("Invalid dual-runtime manifest; repackage runtimes.");
+    }
+    manifest.wasm32 = {
+      architecture: "wasm32", buildId,
+      moduleUrl: `/usd-webview-bindings/usdWebViewBindingsModule.js?v=${buildId}`,
+      wasmUrl: `/usd-webview-bindings/usdWebViewBindingsModule.wasm?v=${buildId}`,
+    };
+    await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   return buildId;
 }
 

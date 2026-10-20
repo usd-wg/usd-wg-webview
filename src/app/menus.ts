@@ -43,6 +43,7 @@ import { waitForUiPaint } from "./automation";
 import { onTick } from "./animation";
 import { setStatus } from "./statusBar";
 import { collectRendererStats, getEffectiveUpAxis, renderStageSummary } from "./summaries";
+import { renderStatsMetrics } from "./statsMetrics";
 import { applyStageEdit } from "./stageEdits";
 
 const menuItems = Array.from(app.querySelectorAll<HTMLElement>(".menu-item"));
@@ -90,6 +91,7 @@ app.querySelector("#menuOpenFolder")?.addEventListener("click", () => {
 
 app.querySelector("#menuStats")?.addEventListener("click", () => {
   statsPanel.hidden = !statsPanel.hidden;
+  if (!statsPanel.hidden) renderStatsMetrics();
 });
 
 export function applyNavigationOptions(): void {

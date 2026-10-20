@@ -6,6 +6,33 @@ This document records the full OpenUSD + MaterialX + WebAssembly build pipeline 
 
 The goal is to make it possible to recreate the entire WASM SDK from scratch on a new machine without reverse-engineering old build artifacts.
 
+## Current runtime contract
+
+Both variants use OpenUSD **26.08**, already introduced on `main` by PR #31.
+The dual-runtime feature adds Memory64 support and selection, not a new USD
+version. Canonical prebuilt pairs, hash verification, release packaging and
+CI are described in [building.md](building.md#dual-runtime-packaging-and-deployment).
+A normal checkout packages both variants automatically for development/build.
+
+| Browser option | Selection | Startup fallback |
+| --- | --- | --- |
+| absent / `wasm=auto` | Validate Memory64, prefer 64 when available | Retry 32 once if 64 initialization fails |
+| `wasm=32` | Always 32; no Memory64 probe | None |
+| `wasm=64` | Require Memory64 and packaged 64 pair | None; fail explicitly |
+
+Current compiled linear-memory ceilings are 2 GiB (32) and 8 GiB (64).
+These are not file-size limits or guarantees of available memory. Fallback
+happens only before stage loading; a later allocation/scene-load failure does
+not restart the stage in another runtime. Ordinary successful startup fetches
+one generated JS/WASM pair, with no speculative download of the other pair.
+The small manifest and shared wrapper load separately.
+
+The experiment chronology below retains historical hashes/results; current
+artifact identities and sizes come from the generated manifests and Stats.
+Full-island/high-residency USD and actual mobile-device benchmarks remain
+pending. Automated Chromium checks establish functional compatibility, not
+production-scale scene capacity.
+
 ## Isolated local SDK experiment
 
 As checked on 2026-10-20, the latest stable upstream release is `v26.08`
@@ -16,7 +43,8 @@ The existing local `USD_WASM_Build` was built from OpenUSD 26.05; the release
 named in repository documentation does not establish the version of a local
 SDK. Inspect its source revision and CMake cache before reusing it.
 
-The local experiment uses a separate `experiment/wasm64` viewer worktree.
+The local experiment began on `experiment/wasm64`; release preparation now
+uses `feat/wasm64-runtime` in that same isolated viewer worktree.
 Its sibling directories are:
 
 ```text
@@ -150,6 +178,18 @@ WASM32 uses the normal mandatory `native:build`/stamp workflow. WASM64 writes
 a content-derived `build.json` identifying both generated files, without
 changing the normal viewer's cache IDs.
 
+After rebuilding, import the 64-bit pair into its canonical release location:
+
+```sh
+npm run native:package -- public/localAssets/wasm64-runtime
+npm run native:verify
+npm run build
+```
+
+Keep both SDKs/build directories separate. After a C++ or dependency change,
+rebuild both variants before publishing. Include `native/artifacts/wasm64/`
+and the WASM32 pair/hash record with the source change; do not hand-edit hashes.
+
 The visual runner has a **test-only** `--runtime-assets` override:
 
 ```sh
@@ -160,13 +200,13 @@ npm run test:regression -- --base-url http://127.0.0.1:8001 \
 This redirects requests for generated glue and WASM to the experimental
 pair while reusing the same maintained wrapper and frontend. It records the
 replacement URLs in its report and disallows baseline updates. Normal
-viewer startup continues to load the freshly rebuilt WASM32 runtime;
-automatic architecture selection and dual-variant production packaging are
-not implemented by this test override. The normal on-screen build stamp
-still identifies WASM32; use the test report and artifact hashes for the
-experimental runtime's identity.
+viewer startup without a packaged manifest loads the freshly rebuilt WASM32
+runtime. This legacy test override does not exercise architecture selection;
+its on-screen identity still identifies the redirected WASM32 request, so use
+the test report and artifact hashes for the experimental runtime's identity.
+For selection-aware testing, use the package and `--wasm` commands below.
 
-### Full SDK experiment results
+### Historical full SDK experiment results (before Stats instrumentation)
 
 Both complete SDKs and viewer bindings build with the pinned sources and
 Emscripten 6.0.0. No additional OpenUSD source patches were needed for WASM64
@@ -189,9 +229,9 @@ pixel-identical between the rebuilt WASM32 and WASM64 runtimes. The report
 records requests redirected to the experimental glue and WASM, and includes
 the pair's build manifest. No baselines were updated.
 
-The complete gate still reports failure because `usdpreview-uv` was
-deliberately retained as a diagnostic fixture. This is not a fully green
-expanded suite. Its failure is unchanged across the original upstream
+That historical expanded gate reported failure because `usdpreview-uv` was
+deliberately retained as a diagnostic fixture. It was not a fully green
+expanded suite. Its failure was unchanged across the original upstream
 WASM32 binary, the rebuilt 26.08 WASM32 binary, and WASM64.
 
 Local evidence resides beside the isolated viewer:
@@ -202,17 +242,137 @@ Local evidence resides beside the isolated viewer:
   `wasm64-regression/` (reports and captured images)
 - `memory64-probe-result.log`
 
-The 55 unit tests and production frontend build also pass. These checks
+The then-current 55 unit tests and production frontend build also passed. Those checks
 establish local build/render feasibility, not a supported large-scene limit:
 the >4 GiB address test uses a standalone Embind module, and the full USD
 runtime has so far rendered the small regression scenes. Realistic
-high-residency USD tests, other browsers, and production selection/fallback
-remain future work.
+high-residency USD tests and other browsers remain future work. The following
+section records the subsequent selection/fallback implementation.
 
 The editor-dependent `usdpreview-uv` diagnostic fixture is preserved outside
 the viewer at `<lab>/diagnostics/usdpreview-uv-editor/`, alongside the saved
 reports. It is not part of the experiment's default regression gate: its
 native graph-translation prerequisites belong to the separate editor work.
+
+### Selective loading and manual testing
+
+#### Large-scene metrics in ? → Stats
+
+The existing Stats panel includes live load/runtime/resource sections; there
+is no separate diagnostics window. Open it on the isolated viewer (port 8001).
+It samples once per second while visible, plus native load checkpoints.
+Synchronous native work blocks the browser thread, so UI samples cannot expose
+every temporary allocation peak.
+
+- Input: selected file count, total bytes, root and largest-file sizes. These
+  are the files supplied to the importer, not only composed layers. A USDZ
+  input is measured at its archive size, not its uncompressed content size.
+- Timings: file import, USD open, extraction/material handoff, total runtime
+  load, and application load-to-ready (including texture decode/viewport setup;
+  excluding the file picker or automation's preceding HTTP downloads).
+- Native: actual linear-memory capacity and compiled maximum from Emscripten;
+  allocated/free allocator bytes from `mallinfo`; sampled allocated peak since
+  the most recent load; remaining permitted linear-memory growth. Capacity
+  includes stack/static data and free space and does not shrink on scene unload.
+  It is not physical resident RAM. Allocator free bytes are not all unused
+  linear-memory bytes. Peak sampling can miss transients within native calls.
+- Imported files: logical MEMFS byte size and retained original byte copies,
+  excluding embedded SDK files. These are JavaScript-backed resources, not
+  extra native allocations. Original copies remain necessary for existing edit
+  behavior; instrumentation does not remove them.
+- Browser: optional `performance.memory` JS used/capacity/limit values.
+  These are approximate, browser-dependent, and may omit external buffers.
+  Unsupported browsers say “Unavailable”, never zero.
+- Renderer: backend, drawing-buffer resolution, frame interval/FPS, draw calls,
+  frame triangles, registered texture/geometry counts, mesh instance count,
+  deduplicated CPU geometry backing-buffer bytes, and known texture dimensions
+  expressed as an RGBA8 base-level byte estimate. The latter is not actual GPU
+  texture storage (float/compressed formats, mipmaps, private MaterialX resources,
+  render targets, environment maps, and splat resources can differ or be absent).
+  WebGPU's renderer-tracked memory bytes are shown when exposed by Three.js.
+  Neither these tracked estimates nor CPU inventories measure physical VRAM.
+
+Do not add these overlapping categories into a supposed total process-memory
+figure. Neither physical browser-process RAM nor total GPU VRAM is available.
+Frame interval is CPU frame cadence, not GPU execution time. Scene replacement
+resets input/timing/peak metrics; native capacity can remain high by design.
+
+The `GetMemoryStats` native binding returns byte counts as JavaScript Numbers,
+without narrowing WASM64 `size_t` to 32 bits. Its translation unit uses the
+Emscripten compatibility `malloc.h` declaration matching dlmalloc. Rebuild and
+stamp both architectures after changes to this binding.
+
+Validation:
+
+```sh
+npm run test:unit
+npm run build
+npm run test:stats -- http://127.0.0.1:8001
+```
+
+The browser test checks both architectures, positive allocator counters,
+2/8 GiB ceilings, file accounting, replacement reset, unavailable browser heap
+reporting, and existing-panel open/close/narrow-width behavior. Screenshots
+are saved to `/tmp/usd-stats-wasm32.png` and `/tmp/usd-stats-wasm64.png`.
+
+#### Selection verification
+
+After merging the main-branch UV fallback fix, the experiment's default
+corpus has 23 captures (including `materialx-fallback-uv`). Both forced
+WASM32 and forced WASM64 pass all 23 without baseline changes. Historical
+diagnostic results above are retained separately.
+
+`npm run dev` packages both canonical runtimes automatically. Start the
+isolated viewer on port 8001. See [building.md](building.md)
+for packaging, cache identity, and deployment requirements.
+
+```sh
+npm run dev -- --port 8001
+# Other terminal, from the isolated viewer:
+npm run test:runtime-selection -- http://127.0.0.1:8001
+npm run test:regression -- --base-url http://127.0.0.1:8001 --wasm 32
+npm run test:regression -- --base-url http://127.0.0.1:8001 --wasm 64
+```
+
+The selection browser test checks seven fresh contexts: auto 64, forced 32,
+forced 64, simulated unavailable Memory64, mobile emulation, failed 64-bit
+download, and an ordinary 32-only package. It loads a real USD scene, checks
+the selected build label, and asserts that unused module pairs are not
+requested. All seven pass locally in Chromium 149.0.7827.55. A failed 64-bit
+download is the intentional exception: its failed JS request precedes the
+32-bit pair. Forced-mode unit tests also ensure errors are not hidden by
+fallback.
+
+Manual checks:
+
+- `http://localhost:8001/`: auto; a capable browser should show `wasm64-<hash>`.
+- `http://localhost:8001/?wasm=32`: compatibility rendering, `wasm32-<hash>`.
+- `http://localhost:8001/?wasm=64`: strict 64-bit rendering, or an explicit
+  error if unsupported/unpackaged.
+- In DevTools Network, filter `usdWebViewBindingsModule`, disable cache,
+  clear the log, and reload. Normal startup requests exactly one generated
+  JS file and one WASM file for the selected variant.
+- To exercise startup failure fallback, block
+  `http://localhost:8001/usd-webview-bindings/wasm64/*` in Chrome's Request
+  conditions drawer and reload the auto URL (no `wasm=64`). This drawer uses
+  URLPattern syntax; the old leading `*/` glob fails to parse. Match the actual
+  host/port if different. Alternatively right-click the WASM64 module request
+  in Network and choose Block request. Enable blocking, keep DevTools open,
+  and clear unrelated Network filters. Expect a 32-bit build label and a
+  fallback reason on hover or in Stats.
+  Remove the block afterwards. This tests startup failure, not an unsupported
+  engine; the automated test separately simulates the feature probe failure.
+
+Chrome Device Mode changes viewport/input/device characteristics, not the
+WebAssembly engine; it does **not** imply WASM32 fallback. The automated mobile
+emulation case therefore still selects WASM64 on this browser. Consult
+[Chrome's Device Mode limitations](https://developer.chrome.com/docs/devtools/device-mode)
+and use real devices to test actual browser support and memory pressure.
+Mobile hardware might support Memory64 yet still have little available RAM.
+
+Large real-world USD memory residency and actual mobile-browser coverage are
+still unverified; the 8 GiB WASM64 maximum is a build ceiling, not a promised
+scene size.
 
 ---
 
@@ -246,17 +406,15 @@ ee47c679abde5b467a7b6a41f3b2285564a4222e
 
 ## usd-wg-webview
 
-Commit:
-
-```text
-2095fafafd033fa23386d7ec6d58c7cc33974518
-```
+Use the source revision being built and preserve the generated artifact hash
+records with it. Old source-revision examples are not provenance for new pairs.
 
 ## MaterialX
 
-MaterialX was built from a standalone source checkout.
-
-**TODO:** record exact commit if available.
+MaterialX is built from the standalone checkout at
+`22f1c433e71f49a541a15c4b1f5f9084b97be226` (1.39.6 development revision).
+This native dependency is distinct from the separately vendored ASWF
+JavaScript/WASM validation runtime.
 
 ---
 
@@ -596,18 +754,9 @@ cmake --build build/usd-webview-bindings \
   --target install
 ```
 
-Then update:
-
-```text
-public/usd-webview-bindings/usdWebViewBindings.js
-  _wasmBuildId
-  _wrapperBuildId
-
-src/usd/UsdWebViewRuntime.ts
-  RUNTIME_ENTRYPOINT
-```
-
-to force browser cache invalidation.
+Then run `npm run native:stamp` to derive cache identities from the generated
+pair and wrapper. Never edit generated IDs manually. `npm run native:build`
+combines install and stamping; repackage the 64-bit pair after rebuilding it.
 
 ---
 
@@ -681,9 +830,10 @@ To recreate the WASM environment on a new machine:
 - Build MaterialX for WASM
 - Build OpenUSD for WASM
 - Enable MaterialX support in OpenUSD
-- Build usd-webview-bindings
-- Update browser cache-bust identifiers
-- Verify runtime loads successfully
+- Build usd-webview-bindings for both architectures
+- Run content-derived stamping and import the WASM64 release pair
+- Verify both pairs and build the production package
+- Run forced 32/64 visual suites and selection/fallback/Stats checks
 
 Required source trees:
 

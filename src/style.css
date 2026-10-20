@@ -679,7 +679,7 @@ input {
   position: fixed;
   top: 36px;
   right: 12px;
-  width: 280px;
+  width: min(420px, calc(100vw - 24px));
   background: #1e2428;
   border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 6px;
@@ -721,8 +721,19 @@ input {
 
 .stats-body {
   padding: 12px;
-  max-height: 400px;
+  max-height: min(650px, calc(100vh - 110px));
   overflow-y: auto;
+}
+
+.stats-panel .status-list {
+  grid-template-columns: minmax(130px, 1fr) minmax(0, 1fr);
+}
+
+.stats-note {
+  color: #9fa7ad;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 12px 0;
 }
 
 .stats-section-title {
