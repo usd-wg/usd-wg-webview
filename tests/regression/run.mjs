@@ -3,24 +3,24 @@
 // API) and gates screenshots against committed baselines.
 //
 // Usage:
-//   node tools/regression/run.mjs                  # run + gate
-//   node tools/regression/run.mjs --update-baselines
-//   node tools/regression/run.mjs --case variants --case payload-toggle
-//   node tools/regression/run.mjs --base-url http://127.0.0.1:8000
+//   node tests/regression/run.mjs                  # run + gate
+//   node tests/regression/run.mjs --update-baselines
+//   node tests/regression/run.mjs --case variants --case payload-toggle
+//   node tests/regression/run.mjs --base-url http://127.0.0.1:8000
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 import { PNG } from "pngjs";
-import pixelmatch from "pixelmatch";
+import { diffAgainstBaseline } from "./compare.mjs";
 import { evaluateGate, resolveGate } from "./gate.mjs";
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
-const CORPUS_ROOT = path.join(REPO_ROOT, "tests", "corpus");
-const BASELINES_ROOT = path.join(REPO_ROOT, "tests", "regression", "baselines");
-const GENERATED_ROOT = path.join(REPO_ROOT, "tools", "regression", "generated");
-const RESULTS_ROOT = path.join(REPO_ROOT, "tools", "regression", "results");
+const REGRESSION_ROOT = path.dirname(new URL(import.meta.url).pathname);
+const CASES_ROOT = path.join(REGRESSION_ROOT, "cases");
+const OUTPUT_ROOT = path.resolve(REGRESSION_ROOT, "..", "..", "test-results", "regression");
+const GENERATED_ROOT = path.join(OUTPUT_ROOT, "generated");
+const RESULTS_ROOT = path.join(OUTPUT_ROOT, "results");
 
 const CAPTURE = {
   viewportWidth: 800,
@@ -29,16 +29,20 @@ const CAPTURE = {
   settleFrames: 8,
 };
 
-export async function listCorpusCases() {
-  const entries = await fs.readdir(CORPUS_ROOT, { withFileTypes: true });
+export async function listCases() {
+  const entries = await fs.readdir(CASES_ROOT, { withFileTypes: true });
   const cases = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory()) continue;
-    const caseDir = path.join(CORPUS_ROOT, entry.name);
+    const caseDir = path.join(CASES_ROOT, entry.name);
     const casePath = path.join(caseDir, "case.json");
     const spec = JSON.parse(await fs.readFile(casePath, "utf8"));
     const files = (await listFilesRecursive(caseDir))
-      .filter((filePath) => path.basename(filePath) !== "case.json")
+      .filter((filePath) => {
+        const relativePath = path.relative(caseDir, filePath);
+        return path.basename(filePath) !== "case.json" &&
+          !relativePath.startsWith(`baselines${path.sep}`);
+      })
       .map((filePath) => ({
         path: toPosixPath(path.relative(caseDir, filePath)),
         absolutePath: filePath,
@@ -108,33 +112,6 @@ async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false } = {})
   return captured;
 }
 
-function diffAgainstBaseline(baselinePng, resultPng, gate, diffPath) {
-  if (
-    baselinePng.width !== resultPng.width ||
-    baselinePng.height !== resultPng.height
-  ) {
-    return {
-      status: "size-mismatch",
-      detail:
-        `baseline ${baselinePng.width}x${baselinePng.height} vs ` +
-        `result ${resultPng.width}x${resultPng.height}`,
-    };
-  }
-
-  const { width, height } = baselinePng;
-  const diffPng = new PNG({ width, height });
-  const mismatched = pixelmatch(
-    baselinePng.data,
-    resultPng.data,
-    diffPng.data,
-    width,
-    height,
-    { threshold: gate.pixelmatchThreshold }
-  );
-  const mismatchRatio = mismatched / (width * height);
-  return { status: "compared", mismatchRatio, diffPng, diffPath };
-}
-
 export async function runRegression({
   updateBaselines = false,
   caseFilter = [],
@@ -142,9 +119,8 @@ export async function runRegression({
 } = {}) {
   await fs.rm(RESULTS_ROOT, { recursive: true, force: true });
   await ensureDir(RESULTS_ROOT);
-  await ensureDir(BASELINES_ROOT);
 
-  let cases = await listCorpusCases();
+  let cases = await listCases();
   if (caseFilter.length) {
     const wanted = new Set(caseFilter);
     cases = cases.filter((caseSpec) => wanted.has(caseSpec.id));
@@ -198,11 +174,9 @@ export async function runRegression({
       }
 
       for (const { captureName, screenshotPath } of captured) {
-        const baselinePath = path.join(
-          BASELINES_ROOT,
-          `${caseSpec.id}--${captureName}.png`
-        );
+        const baselinePath = path.join(caseSpec.caseDir, "baselines", `${captureName}.png`);
         if (updateBaselines) {
+          await ensureDir(path.dirname(baselinePath));
           await fs.copyFile(screenshotPath, baselinePath);
           entries.push({ caseId: caseSpec.id, captureName, status: "blessed", gate });
           continue;

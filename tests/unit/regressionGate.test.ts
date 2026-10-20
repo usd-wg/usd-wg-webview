@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_GATE, evaluateGate, resolveGate } from "../../tools/regression/gate.mjs";
+import { DEFAULT_GATE, evaluateGate, resolveGate } from "../regression/gate.mjs";
 
 const gate = DEFAULT_GATE;
 

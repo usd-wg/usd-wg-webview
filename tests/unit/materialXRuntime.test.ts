@@ -58,7 +58,7 @@ describe("MaterialXRuntime", () => {
 
     expect(second).toBe(first);
 
-    const source = await readFile("tests/corpus/materialx-tiled/material/tiled-letter.mtlx", "utf8");
+    const source = await readFile("tests/regression/cases/materialx-tiled/material/tiled-letter.mtlx", "utf8");
 
     const result = await first.compile(source, { path: "tiled-letter.mtlx", target: "essl" });
 

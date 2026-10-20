@@ -621,6 +621,9 @@ export class ThreeViewport {
       mesh.matrixAutoUpdate = false;
     }
 
+    // Direct matrix writes must invalidate world transforms before bounds queries.
+    mesh.matrixWorldNeedsUpdate = true;
+
     if (!(mesh instanceof InstancedMesh)) {
       return;
     }
@@ -645,6 +648,7 @@ export class ThreeViewport {
       if (!mesh || matrix.length !== 16) continue;
       mesh.matrix.set(...(matrix as Parameters<typeof mesh.matrix.set>));
       mesh.matrix.transpose();
+      mesh.matrixWorldNeedsUpdate = true;
     }
   }
 

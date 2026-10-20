@@ -26,12 +26,12 @@ jobs:
       - run: npm ci
       # The committed wasm under public/ is the artifact under test; the
       # regression runner spins up Vite + headless Chromium and gates
-      # screenshots of the corpus against tests/regression/baselines.
+      # screenshots of tests/regression/cases against their baselines.
       - run: npx playwright install --with-deps chromium
       - run: npm run test:regression
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: regression-diffs
-          path: tools/regression/results/
+          path: test-results/regression/results/
           if-no-files-found: ignore

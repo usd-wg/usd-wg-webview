@@ -17,5 +17,4 @@ tools/usd-material-fidelity/config.local.json
 tools/usd-material-fidelity/results/
 tools/usd-material-fidelity/reports/
 tools/usd-material-fidelity/work/
-tools/regression/generated/
-tools/regression/results/
+test-results/

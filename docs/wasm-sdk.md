@@ -28,10 +28,12 @@ USD/
 
 ## OpenUSD
 
+Release: `v26.08`
+
 Commit:
 
 ```text
-98e94584319047e40cfd031813e5a04b42b9a2dd
+ee47c679abde5b467a7b6a41f3b2285564a4222e
 ```
 
 ## usd-wg-webview
@@ -158,13 +160,34 @@ cmake --build MaterialX_WASM_Build/build --target install
 
 # OpenUSD WASM Build
 
-OpenUSD is built using the built-in WASM target:
+The webview WASM artifacts are built against OpenUSD `v26.08` (commit above).
+The stock WASM target disables imaging and MaterialX, so this build enables
+those components through USD CMake arguments. Build OpenSubdiv into the same
+install prefix first, following the manual build below.
+
+With `EMSDK` active and `MATERIALX_WASM_INSTALL` pointing at the MaterialX WASM
+install, configure the WASM SDK with:
 
 ```bash
 python3 build_scripts/build_usd.py \
   --build-target wasm \
+  --no-imaging --no-materialx \
+  --no-python --no-tests --no-tools --no-examples --no-tutorials --no-docs \
+  --no-usdview --no-alembic --no-draco --no-openimageio --no-opencolorio \
+  --no-openvdb --no-ptex --no-embree --no-prman \
+  --build-args "USD,-DCMAKE_HAVE_LIBC_PTHREAD=1 -DTHREADS_HAVE_PTHREAD_ARG=ON -DPXR_BUILD_IMAGING=ON -DPXR_BUILD_USD_IMAGING=ON -DPXR_ENABLE_MATERIALX_SUPPORT=ON -DPXR_ENABLE_GL_SUPPORT=OFF -DPXR_ENABLE_PYTHON_SUPPORT=OFF -DPXR_ENABLE_PRECOMPILED_HEADERS=OFF -DMaterialX_DIR=${MATERIALX_WASM_INSTALL}/lib/cmake/MaterialX" \
+  -j 8 \
   <install_dir>
 ```
+
+For restricted build environments, point `EM_CACHE` at a writable directory
+before building. `CMAKE_HAVE_LIBC_PTHREAD=1` and
+`THREADS_HAVE_PTHREAD_ARG=ON` let CMake configure Emscripten's pthread support
+without its compile probe.
+
+OpenUSD 26.08's `hgi.cpp` also needs the documented Emscripten unknown-platform
+branch below so the no-GPU WASM build returns `nullptr` instead of triggering
+`#error Unknown Platform`.
 
 The resulting install directory is:
 
@@ -429,9 +452,16 @@ hit:
 #error Unknown Platform
 ```
 
-For a no-GPU web extraction build, remove that compile-time error and keep the
-existing `return nullptr;` in the unknown-platform branch. This lets HGI compile
-without manufacturing a fake GL/Metal/Vulkan backend.
+For a no-GPU web extraction build, add an Emscripten branch before the unknown
+platform fallback:
+
+```cpp
+#elif defined(__EMSCRIPTEN__)
+    "";
+    return nullptr;
+```
+
+This lets HGI compile without manufacturing a fake GL/Metal/Vulkan backend.
 
 ---
 

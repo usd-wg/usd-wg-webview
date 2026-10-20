@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 8000 --strictPort",
-    "test": "vitest run && node tools/regression/run.mjs",
+    "test": "vitest run && node tests/regression/run.mjs",
     "test:unit": "vitest run",
-    "test:regression": "node tools/regression/run.mjs",
-    "test:regression:bless": "node tools/regression/run.mjs --update-baselines",
+    "test:regression": "node tests/regression/run.mjs",
+    "test:regression:bless": "node tests/regression/run.mjs --update-baselines",
     "materialx:fetch": "node tools/materialx/fetch-official-runtime.mjs",
     "native:stamp": "node tools/native-build/stamp-build.mjs",
     "native:build": "cmake --build build/usd-webview-bindings --target install && npm run native:stamp",

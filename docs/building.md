@@ -14,13 +14,13 @@ For details on recreating the OpenUSD + MaterialX WASM toolchain from scratch, s
 
 ## 1. Build OpenUSD for WASM
 
-Clone OpenUSD and build targeting WASM using the provided build script:
+The current webview WASM module targets OpenUSD `v26.08` at commit
+`ee47c679abde5b467a7b6a41f3b2285564a4222e`. Follow the version-specific
+toolchain and component settings in [wasm-sdk.md](wasm-sdk.md); the stock WASM
+target disables imaging and MaterialX, which this project enables.
 
-```sh
-cd /path/to/OpenUSD
-source /path/to/emsdk/emsdk_env.sh
-python3 build_scripts/build_usd.py --build-target wasm /path/to/USD_WASM_Build
-```
+Build OpenUSD using the version-specific command in [wasm-sdk.md](wasm-sdk.md).
+It includes the imaging and MaterialX settings required by this viewer.
 
 This produces static libraries and CMake config files under `/path/to/USD_WASM_Build`.
 
@@ -51,7 +51,7 @@ This installs the generated module artifacts into `public/usd-webview-bindings/`
 | File                            | Description                           |
 | ------------------------------- | ------------------------------------- |
 | `usdWebViewBindingsModule.js`   | Emscripten-generated JS glue          |
-| `usdWebViewBindingsModule.wasm` | Compiled OpenUSD WASM binary (~10 MB) |
+| `usdWebViewBindingsModule.wasm` | Compiled OpenUSD WASM binary (~19 MB) |
 
 The browser-facing wrapper is currently maintained separately at:
 
@@ -62,13 +62,13 @@ public/usd-webview-bindings/usdWebViewBindings.js
 ## 3. Run the frontend
 
 ```sh
-npm install
+npm ci
 npm run dev
 ```
 
 Open the URL printed by Vite. The runtime panel should report **ready** once the WASM module loads.
 
-Plain `npm install` is enough for the frontend dependencies, including the
+Use `npm ci` to install the exact locked frontend dependencies, including the
 pinned upstream Three.js dev snapshot and the checked-in official MaterialX
 JavaScript/WASM validation runtime.
 
