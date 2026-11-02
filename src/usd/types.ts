@@ -257,6 +257,22 @@ export type SceneGraphPrim = {
   isPayloadLoaded?: boolean;
 };
 
+export type StageCamera = { path: string; name: string };
+
+export type StageCameraSample = {
+  path: string;
+  /** Rigid camera-to-world matrix, in USD row-major order. */
+  matrix: number[];
+  projection: "perspective" | "orthographic";
+  horizontalAperture: number;
+  verticalAperture: number;
+  horizontalApertureOffset: number;
+  verticalApertureOffset: number;
+  focalLength: number;
+  near: number;
+  far: number;
+};
+
 export type PrimAttribute = {
   name: string;
   typeName: string;
@@ -279,6 +295,8 @@ export type UsdWebViewBindings = {
   getSkelDebugInfo?: (stagePath: string, primPath: string, timeA?: number, timeB?: number) => unknown;
   getLastSkelBindingOverlayContents?: (stagePath: string) => string;
   getSceneGraph?: (stagePath: string) => SceneGraphPrim[];
+  getStageCameras?: (stagePath: string) => StageCamera[];
+  sampleStageCamera?: (stagePath: string, cameraPath: string, timeCode: number) => StageCameraSample | null;
   getPrimAttributes?: (stagePath: string, primPath: string) => PrimAttribute[];
   setPrimAttribute?: (stagePath: string, primPath: string, attrName: string, value: string) => boolean;
   setVariantSelection?: (stagePath: string, primPath: string, variantSetName: string, selection: string) => boolean;

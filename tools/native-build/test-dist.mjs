@@ -26,5 +26,6 @@ try {
     await run(["tools/native-build/test-stats.mjs", base]);
   } else {
     await run(["tests/regression/run.mjs", "--base-url", base, "--wasm", mode]);
+    await run(["tests/cameras/run.mjs", "--base-url", base, "--wasm", mode]);
   }
 } finally { server.kill("SIGTERM"); }

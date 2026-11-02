@@ -330,6 +330,8 @@ emscripten::val GetSkelDebugInfo(
     double timeB);
 emscripten::val OpenStage(const std::string& path, bool loadAllPayloads = true);
 emscripten::val ExtractTransformsAtTime(const std::string& path, double timeCode);
+emscripten::val GetStageCameras(const std::string& path);
+emscripten::val SampleStageCamera(const std::string& path, const std::string& cameraPath, double timeCode);
 emscripten::val GetSceneGraph(const std::string& path);
 emscripten::val GetPrimAttributes(const std::string& stagePath, const std::string& primPath);
 bool SetPrimAttribute(

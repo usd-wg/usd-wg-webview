@@ -1,6 +1,7 @@
 import type { StageSummary } from "../usd/types";
 import { runtime, state } from "./appState";
 import { playbar, playbarEnd, playbarScrubber, playbarTime, playBtn } from "./dom";
+import { sampleSelectedCamera } from "./cameras";
 
 export function setPlaying(playing: boolean): void {
   state.animPlaying = playing;
@@ -56,6 +57,7 @@ export function sampleAnimationFrame(timeCode: number): void {
     state.viewport.updateRenderablesPartial(renderables);
   }
   state.viewport.setStageLights(runtime.extractStageLights(timeCode));
+  sampleSelectedCamera(timeCode);
 }
 
 export function onTick(): void {

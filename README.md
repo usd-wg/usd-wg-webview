@@ -21,11 +21,15 @@ required.
   changes.
 - **Payloads** - per-prim load/unload from the scene graph, bulk load/unload
   from the Stage menu, and a stage-open policy for loading payloads by default.
-- **Gaussian splats** - USD-authored splat data rendered with SparkJS alongside
-  mesh content, with fidelity and detail controls for spherical harmonics and
-  splat scale.
+- **Gaussian splats** - USD-authored splat data rendered with Spark Radix in
+  the same viewport as meshes and MaterialX. WebGPU performs projection and
+  sorting on the GPU; WebGL2 compatibility uses worker sorting. Spherical
+  harmonics and splat scale remain adjustable.
 - **Animation playback** - timecode scrubbing and play/pause via a minimal
   playbar, shown when the loaded stage has an animated time range.
+- **Stage cameras** - the viewport Camera dropdown lists composed stage cameras
+  above the editor's Perspective view. Camera movement and lens animation follow
+  the playbar, with perspective/orthographic projection and authored framing.
 - **Inspection UI** - scene graph, prim attributes, selection highlighting,
   payload and variant badges, stage summary, renderer stats, up-axis handling,
   and HDRI/default lighting controls.
@@ -44,11 +48,13 @@ required.
 
 ## Current Constraints
 
-- **Gaussian splats + MaterialX** - SparkJS remains WebGL-only; MaterialX
-  rendering uses Three's WebGPU/TSL path and can require a renderer switch.
+- **Radix maturity** - the renderer uses Radix 0.0.1 and Three.js 0.186.0.
+  Mixed splat/mesh rendering adds color/depth compositing passes. Transparent
+  mesh/splat intersections and large-scene/mobile performance need further
+  evaluation; see [Gaussian splats](docs/gaussian-splats.md).
 - **USDLux fidelity** - USDLux is translated to the light types available in
-  Three.js, not path-traced. WebGL and WebGPU have different area-light
-  behavior; see [Lighting](docs/lighting.md).
+  Three.js, not path-traced. Both backends currently approximate rect/disk
+  emitters with spot lights; see [Lighting](docs/lighting.md).
 - **Large scenes** - WASM32/WASM64 currently permit 2/8 GiB of linear memory.
   These are build ceilings, not supported scene-file sizes or available RAM.
   Input copies, JavaScript buffers, textures, and GPU resources add costs.
@@ -62,6 +68,27 @@ the USD light prim; the attributes panel then exposes editable light inputs such
 as intensity, exposure, color, temperature, radius, width, height, and shaping
 cone values. Press `F` to frame the selected light. Gizmos are selection aids,
 not transform manipulators.
+
+## Camera Views
+
+Choose a stage camera from **Camera** at the top right of the viewport. The
+image fits the authored filmback, with masking outside its frame. Scrubbing
+and playback evaluate the selected camera at the same time as the scene,
+including parent transforms, roll, lens animation, aperture offsets and clipping.
+Navigation is suspended while viewing a stage camera; choose **Editor >
+Perspective** to restore the previous free view. Camera selection is for viewing,
+not editing or keyframing the USD camera.
+
+The list includes cameras in loaded references, instances and payloads. Variant
+and payload changes refresh it; removing the selected camera returns to the
+editor view. A new stage starts in the editor view. Depth of field, motion blur,
+camera exposure, additional clipping planes and render-settings-specific film
+conformance are not implemented by this viewport camera feature.
+
+ALab's `alab_splat_with_camera.usda` composes `/camera/camera`: 570 samples at
+24 fps. Its four-direction capture positions and final overhead grid contain
+rapid turns and jumps. Playback follows the authored USD samples and interpolation;
+it does not invent a smoothed flythrough.
 
 ## Architecture
 
@@ -78,11 +105,11 @@ Three.js viewport + app shell        src/viewer/*  ·  src/app/*  ·  src/main.t
 The native side is split into translation units under
 `native/usd-webview-bindings/src/` — `unifiedDriver.cpp` (the stage driver),
 `materials.cpp`, `meshExtraction.cpp`, `pointInstancer.cpp`,
-`skelBinding.cpp`, `splats.cpp`, `stageApi.cpp`, `stageRegistry.cpp`,
+`skelBinding.cpp`, `splats.cpp`, `cameras.cpp`, `stageApi.cpp`, `stageRegistry.cpp`,
 `jsInterop.cpp`, and `bindings.cpp` — sharing `webviewCommon.h`. The viewport
 is a facade (`src/viewer/ThreeViewport.ts`) over focused modules:
 `RendererManager`, `GeometryBuilder`, `MaterialFactory`, `TextureCache`,
-`Lighting`, `Navigation`, and `Picking`. See
+`Lighting`, `Navigation`, `StageCamera`, and `Picking`. See
 [Material and Geometry Strategy](docs/material-geometry-strategy.md) for the
 runtime architecture.
 
@@ -105,10 +132,14 @@ npm run build            # packages/verifies both native runtimes into dist/
 npm run test:dist -- 32   # full corpus against the production build, forced 32
 npm run test:dist -- 64   # same corpus, forced 64 (never silently downgrades)
 npm run test:dist -- smoke # automatic selection, fallback and Stats checks
+npm run test:cameras -- --base-url http://127.0.0.1:8000 # camera controls on a running viewer
 ```
 
 Baseline changes are re-blessed with `npm run test:regression:bless` and
 reviewed against generated PNG diffs in `test-results/regression/results/`.
+The production 32/64 test modes also run camera integration checks. To exercise
+both GPU backends on a capable machine, pass `--backend webgpu,webgl2` to
+`test:cameras`; reports and screenshots are saved under `test-results/cameras/`.
 
 ## Development
 
@@ -126,6 +157,8 @@ artifacts; a native toolchain is only needed when changing the bindings.
 | No option, or `?wasm=auto` | Prefer WASM64 if supported; retry WASM32 once on startup failure |
 | `?wasm=32` | Force WASM32 without probing Memory64 |
 | `?wasm=64` | Require WASM64; unsupported or failed startup is an error |
+| `?gpu=webgpu` | Request WebGPU; Radix warns and falls back if unavailable |
+| `?forceWebGL=1` | Force the TSL renderer's WebGL2 compatibility backend |
 
 The status-bar build name identifies the loaded pair. Chrome mobile emulation
 does not disable Memory64. See [building.md](docs/building.md) for packaging/CI
@@ -136,5 +169,6 @@ and [wasm-sdk.md](docs/wasm-sdk.md#selection-verification) for fallback tests.
 - [Building](docs/building.md) — Prerequisites and build instructions for the WASM bindings and frontend
 - [WASM SDK](docs/wasm-sdk.md) — Fresh-machine setup and `npm run native:source` to build both runtimes from pinned sources, plus runtime options and memory metrics
 - [Lighting](docs/lighting.md) — USDLux translation, WebGL/WebGPU behavior, gizmos, editable attributes, and limitations
+- [Gaussian splats](docs/gaussian-splats.md) — Radix integration, color/depth composition, storage, limitations, and backend tests
 - [Material and Geometry Strategy](docs/material-geometry-strategy.md) — Unified stage-driver geometry, authored-material payloads, and known rendering constraints
 - [USD Material Fidelity](tools/usd-material-fidelity/README.md) — Opt-in MaterialX/USD shaderball fidelity harness, setup, and current baseline

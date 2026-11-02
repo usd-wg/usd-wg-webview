@@ -1,0 +1,28 @@
+#usda 1.0
+def Xform "Splats"
+{
+    def ParticleField3DGaussianSplat "FrontAndBack"
+    {
+        custom point3f[] positions = [(-0.2, 0, 0.9), (0.2, 0, -0.9)]
+        custom float3[] scales = [(0.13, 0.13, 0.13), (0.1, 0.1, 0.1)]
+        custom quatf[] orientations = [(1, 0, 0, 0), (1, 0, 0, 0)]
+        custom float[] opacities = [0.95, 1]
+        custom float3[] radiance:sphericalHarmonicsCoefficients = [(1.77, -1.77, -1.77), (-1.77, -1.77, 1.77)]
+        custom int radiance:sphericalHarmonicsDegree = 0
+    }
+    def Xform "Transformed"
+    {
+        double3 xformOp:translate = (1.15, 0, 0)
+        float3 xformOp:scale = (1, 1.4, 0.8)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        def ParticleField3DGaussianSplat "SH3"
+        {
+            custom point3f[] positions = [(0, 0, 0)]
+            custom float3[] scales = [(0.1, 0.23, 0.12)]
+            custom quatf[] orientations = [(0.9238795, 0, 0, 0.3826834)]
+            custom float[] opacities = [0.9]
+            custom float3[] radiance:sphericalHarmonicsCoefficients = [(0, 0, 0), (1, 0, 0), (0, 0.6, 0), (-0.4, 0, 0), (0.2, 0, 0), (0, 0.3, 0), (0, 0.1, 0.3), (0.1, 0, 0), (0, 0.1, 0), (0.2, 0, 0), (0, 0.2, 0), (0, 0, 0.2), (0.1, 0.1, 0), (0, 0.1, 0.1), (0.1, 0, 0.1), (0.1, 0.1, 0.1)]
+            custom int radiance:sphericalHarmonicsDegree = 3
+        }
+    }
+}

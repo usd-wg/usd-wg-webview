@@ -1,13 +1,13 @@
 {
-  "buildId": "experiment-0e35a914de4b",
+  "buildId": "experiment-c9f1aa9a30b5",
   "artifacts": {
     "usdWebViewBindingsModule.js": {
-      "bytes": 143580,
-      "sha256": "ebaf7679bb1dbac0a090fcaaf5393d1572c042ab90caa64db7f61cc6c91b2874"
+      "bytes": 143872,
+      "sha256": "057a54dfa6b820ba2248e97175e0faa3d358f956a5e79080bb747da9783e3847"
     },
     "usdWebViewBindingsModule.wasm": {
-      "bytes": 20562434,
-      "sha256": "ed3c10b49b1e7889a5abdd8fdffcb8fc9344f3f7fe8abfba489977f3e87fb185"
+      "bytes": 20581618,
+      "sha256": "919d994265abaff81dbd5a9da5b120bb26b8780dd5799003e0b4c25a273d1ab7"
     }
   }
 }

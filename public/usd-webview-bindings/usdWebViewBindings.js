@@ -1,5 +1,5 @@
-const _wasmBuildId = "wasm32-d5af53757e06"; // stamped by tools/native-build/stamp-build.mjs
-const _wrapperBuildId = "wasm32-d5af53757e06";
+const _wasmBuildId = "wasm32-c1f797637ef9"; // stamped by tools/native-build/stamp-build.mjs
+const _wrapperBuildId = "wasm32-c1f797637ef9";
 
 function normalizePath(path) {
   return `/${String(path).replace(/^\/+/, "")}`;
@@ -219,6 +219,12 @@ window.UsdWebViewBindings = {
       },
       extractStageLights(stagePath, timeCode = 0) {
         return module.ExtractStageLights(normalizePath(stagePath), timeCode);
+      },
+      getStageCameras(stagePath) {
+        return module.GetStageCameras(normalizePath(stagePath));
+      },
+      sampleStageCamera(stagePath, cameraPath, timeCode) {
+        return module.SampleStageCamera(normalizePath(stagePath), cameraPath, timeCode);
       },
       setPayloadLoaded(stagePath, primPath, loaded) {
         return module.SetPayloadLoaded(normalizePath(stagePath), primPath, loaded);

@@ -12,12 +12,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 import { PNG } from "pngjs";
 import { diffAgainstBaseline } from "./compare.mjs";
 import { evaluateGate, resolveGate } from "./gate.mjs";
 
-const REGRESSION_ROOT = path.dirname(new URL(import.meta.url).pathname);
+const REGRESSION_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const CASES_ROOT = path.join(REGRESSION_ROOT, "cases");
 const OUTPUT_ROOT = path.resolve(REGRESSION_ROOT, "..", "..", "test-results", "regression");
 const GENERATED_ROOT = path.join(OUTPUT_ROOT, "generated");
@@ -25,7 +26,9 @@ const RESULTS_ROOT = path.join(OUTPUT_ROOT, "results");
 
 const CAPTURE = {
   viewportWidth: 800,
-  viewportHeight: 600,
+  // Existing corpus images are 800x400. Set this explicitly instead of relying
+  // on the old canvas intrinsic size and the mobile grid's automatic height.
+  viewportHeight: 400,
   timeoutMs: 90000,
   settleFrames: 8,
 };
@@ -53,7 +56,7 @@ export async function listCases() {
   return cases;
 }
 
-async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false, wasm = "auto" } = {}) {
+async function captureCase(page, baseUrl, caseSpec, { backend = "webgl2", wasm = "auto" } = {}) {
   const manifestUrl = new URL(`/__regression/${caseSpec.id}/manifest.json`, baseUrl).href;
   const routedFiles = new Map(caseSpec.files.map(file => [
     new URL(`/__regression/${caseSpec.id}/files/${file.path.split("/").map(encodeURIComponent).join("/")}`, baseUrl).href,
@@ -83,8 +86,10 @@ async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false, wasm =
   caseUrl.searchParams.set("wasm", wasm);
   caseUrl.searchParams.set("automationManifest", manifestUrl);
   caseUrl.searchParams.set("settleFrames", String(CAPTURE.settleFrames));
-  if (forceWebGL) {
+  if (backend === "webgl2") {
     caseUrl.searchParams.set("forceWebGL", "1");
+  } else {
+    caseUrl.searchParams.set("gpu", "webgpu");
   }
 
   await page.goto(caseUrl.toString(), {
@@ -104,6 +109,14 @@ async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false, wasm =
   if (wasm !== "auto" && actualRuntime.architecture !== `wasm${wasm}`) {
     throw new Error(`Expected wasm${wasm}, got ${actualRuntime.architecture}`);
   }
+  const splatStats = await page.evaluate(() => window.__USD_WEBVIEW_AUTOMATION__.getSplatStats());
+  const expectedBackend = backend === "webgpu" ? "WebGPU" : "WebGL2";
+  if (splatStats.backend !== expectedBackend) {
+    throw new Error(`Expected ${expectedBackend}, got ${splatStats.backend}; refusing silent fallback`);
+  }
+  if (caseSpec.splatCount !== undefined && splatStats.count !== caseSpec.splatCount) {
+    throw new Error(`Expected ${caseSpec.splatCount} splats, got ${splatStats.count}`);
+  }
 
   const captured = [];
   for (const capture of caseSpec.captures ?? [{ name: "default" }]) {
@@ -122,16 +135,26 @@ async function captureCase(page, baseUrl, caseSpec, { forceWebGL = false, wasm =
       if (typeof ops.timeCode === "number") {
         await api.setTime(ops.timeCode);
       }
+      if (ops.reference) await api.configureReferenceCapture(ops.reference);
+      if (ops.splatOptions) api.setSplatOptions(ops.splatOptions);
       await api.settle();
+      await api.renderForCapture();
+      if (ops.splatCount !== undefined && api.getSplatStats().count !== ops.splatCount) {
+        throw new Error(`Expected ${ops.splatCount} splats after edits, got ${api.getSplatStats().count}`);
+      }
     }, {
       variantSelections: capture.variantSelections,
       payloadOps: capture.payloadOps,
       timeCode: capture.timeCode,
+      reference: capture.reference,
+      splatOptions: capture.splatOptions,
+      splatCount: capture.splatCount,
     });
 
     const screenshotPath = path.join(RESULTS_ROOT, `${caseSpec.id}--${capture.name}.png`);
     await page.locator(".viewport canvas").last().screenshot({ path: screenshotPath });
-    captured.push({ captureName: capture.name, screenshotPath, actualRuntime });
+    captured.push({ captureName: capture.name, screenshotPath, actualRuntime,
+      splatStats: await page.evaluate(() => window.__USD_WEBVIEW_AUTOMATION__.getSplatStats()) });
   }
   return captured;
 }
@@ -142,6 +165,7 @@ export async function runRegression({
   baseUrl = null,
   wasm = "auto",
   runtimeAssets = null,
+  backend = "webgl2",
 } = {}) {
   if (runtimeAssets && (!runtimeAssets.startsWith("/localAssets/") || updateBaselines)) {
     throw new Error("Experimental runtime assets must be under /localAssets/ and cannot bless baselines.");
@@ -164,10 +188,15 @@ export async function runRegression({
 
   const browser = await chromium.launch({
     headless: true,
+    // Full Chromium's new headless mode can present WebGPU canvases; the
+    // separate headless-shell binary used by default cannot on some hosts.
+    ...((process.env.USD_WEBVIEW_BROWSER_CHANNEL || backend === "webgpu")
+      ? { channel: process.env.USD_WEBVIEW_BROWSER_CHANNEL || "chromium" } : {}),
     args: ["--enable-unsafe-webgpu"],
   });
 
   const entries = [];
+  const pageErrors = [];
   const runtimeRequests = [];
   let runtimeBuild = null;
   try {
@@ -185,6 +214,7 @@ export async function runRegression({
       deviceScaleFactor: 1,
     });
     page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
       console.warn(`[page error] ${error.message}`);
     });
     if (runtimeAssets) {
@@ -201,14 +231,14 @@ export async function runRegression({
     }
 
     for (const caseSpec of cases) {
-      // Headless Chromium cannot present real-WebGPU canvases (blank output),
-      // so WebGPU-dependent cases run the app's WebGPURenderer on its WebGL2
-      // backend via ?forceWebGL=1. The MaterialX/TSL node path is identical.
-      const forceWebGL = caseSpec.tags?.includes("requiresWebGpu") ?? false;
+      pageErrors.length = 0;
+      // Default to the deterministic compatibility backend in CI. Explicit
+      // WebGPU runs assert the actual backend so a fallback cannot pass them.
       const gate = resolveGate(caseSpec.gate);
       let captured;
       try {
-        captured = await captureCase(page, actualBaseUrl, caseSpec, { forceWebGL, wasm: runtimeAssets ? "32" : wasm });
+        captured = await captureCase(page, actualBaseUrl, caseSpec, { backend, wasm: runtimeAssets ? "32" : wasm });
+        if (pageErrors.length) throw new Error(`Browser errors: ${pageErrors.join("; ")}`);
       } catch (error) {
         for (const capture of caseSpec.captures ?? [{ name: "default" }]) {
           entries.push({
@@ -222,7 +252,7 @@ export async function runRegression({
         continue;
       }
 
-      for (const { captureName, screenshotPath, actualRuntime } of captured) {
+      for (const { captureName, screenshotPath, actualRuntime, splatStats } of captured) {
         const baselinePath = path.join(caseSpec.caseDir, "baselines", `${captureName}.png`);
         if (updateBaselines) {
           await ensureDir(path.dirname(baselinePath));
@@ -258,6 +288,7 @@ export async function runRegression({
             status: "compared",
             mismatchRatio: diff.mismatchRatio,
             actualRuntime,
+            splatStats,
             gate,
           });
         } else {
@@ -284,6 +315,7 @@ export async function runRegression({
     updateBaselines,
     runtimeAssets,
     wasm,
+    backend,
     runtimeRequests,
     runtimeBuild,
     pass: verdict.pass,
@@ -338,7 +370,7 @@ function toPosixPath(filePath) {
   return filePath.split(path.sep).join("/");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   const updateBaselines = args.includes("--update-baselines");
   const caseFilter = [];
@@ -357,7 +389,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const wasm = wasmIndex >= 0 ? args[wasmIndex + 1] : "auto";
   if (!["auto", "32", "64"].includes(wasm)) throw new Error("--wasm requires auto, 32, or 64.");
   if (runtimeAssets && wasm !== "auto") throw new Error("Use --wasm or --runtime-assets, not both.");
-  const report = await runRegression({ updateBaselines, caseFilter, baseUrl, runtimeAssets, wasm });
+  const backendIndex = args.indexOf("--backend");
+  const backend = backendIndex >= 0 ? args[backendIndex + 1] : "webgl2";
+  if (!["webgpu", "webgl2"].includes(backend)) throw new Error("--backend requires webgpu or webgl2.");
+  const report = await runRegression({ updateBaselines, caseFilter, baseUrl, runtimeAssets, wasm, backend });
   for (const entry of report.entries) {
     const label = `${entry.caseId}--${entry.captureName}`;
     if (entry.status === "compared") {

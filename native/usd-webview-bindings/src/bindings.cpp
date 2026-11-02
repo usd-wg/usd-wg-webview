@@ -42,6 +42,8 @@ EMSCRIPTEN_BINDINGS(usdWebViewBindings)
     emscripten::function("ExtractTransformsAtTime", &ExtractTransformsAtTime);
     emscripten::function("OpenStage", &OpenStage);
     emscripten::function("GetSceneGraph", &GetSceneGraph);
+    emscripten::function("GetStageCameras", &GetStageCameras);
+    emscripten::function("SampleStageCamera", &SampleStageCamera);
     emscripten::function("GetPrimAttributes", &GetPrimAttributes);
     emscripten::function("SetPrimAttribute", &SetPrimAttribute);
     emscripten::function("ExtractStageEnvironment", &ExtractStageEnvironment);

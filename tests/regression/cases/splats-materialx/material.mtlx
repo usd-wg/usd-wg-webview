@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<materialx version="1.38" colorspace="lin_rec709">
+  <standard_surface name="SR_surface" type="surfaceshader">
+    <input name="base" type="float" value="1" />
+    <input name="base_color" type="color3" value="0.35, 0.45, 0.5" />
+    <input name="specular_roughness" type="float" value="0.5" />
+  </standard_surface>
+  <surfacematerial name="M_surface" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SR_surface" />
+  </surfacematerial>
+</materialx>

@@ -168,9 +168,8 @@ app.innerHTML = `
       </div>
       <div class="status-bar" id="statusBar" role="status" aria-live="polite">
         <span class="status-spinner" id="statusSpinner" hidden></span>
-        <span class="status-mode" id="materialXModeLabel" hidden>Experimental MaterialX / WebGPU</span>
+        <span class="status-mode" id="materialXModeLabel" hidden>Experimental MaterialX</span>
         <span class="status-mode" id="runtimeArchitectureLabel" hidden></span>
-        <span class="status-mode" id="splatDegradationLabel" hidden>Gaussian splats are not rendered with MaterialX content (SparkJS is WebGL-only)</span>
         <span class="status-label" id="statusLabel">Idle</span>
       </div>
       <input id="filePicker" type="file" multiple accept=".usd,.usda,.usdc,.usdz,.mtlx,.zip,.png,.jpg,.jpeg,.webp,.svg,.exr" style="display:none" />
@@ -183,6 +182,12 @@ app.innerHTML = `
       <div class="sg-resize-x" id="sgResizeX"></div>
     </nav>
     <section class="viewport" aria-label="USD Web View viewport">
+      <div class="camera-control">
+        <label for="cameraSelect">Camera</label>
+        <select id="cameraSelect" title="Choose a stage camera or return to the editor view">
+          <optgroup label="Editor"><option value="">Perspective</option></optgroup>
+        </select>
+      </div>
       <div class="playbar" id="playbar" hidden>
         <button class="playbar-btn" id="playBtn" aria-label="Play">&#9654;</button>
         <span class="playbar-time" id="playbarTime">0</span>
@@ -216,7 +221,7 @@ app.innerHTML = `
       <p class="stats-note">Live sample every second while open; synchronous USD work can pause updates. Memory categories overlap; do not add them. WASM capacity is not physical RAM usage. Native peak resets per load and is sampled, not an allocation high-water mark. JS heap figures are browser-dependent and exclude some external buffers.</p>
       <p class="stats-section-title">Live Renderer</p>
       <dl id="resourceMetrics" class="status-list"></dl>
-      <p class="stats-note">Texture size is an RGBA8 base-level estimate for known textures only, excluding mipmaps, render targets and private shader resources. Renderer-tracked bytes are available on supported backends, not measured GPU VRAM. Total browser-process RAM is unavailable. CPU geometry inventory excludes splat-private buffers.</p>
+      <p class="stats-note">Texture size is an RGBA8 base-level estimate for known textures only, excluding mipmaps, render targets and private shader resources. Renderer-tracked bytes are available on supported backends, not measured GPU VRAM. Splat encoded payload includes allocation padding, but excludes source USD arrays, sorting buffers and compositing targets. Total browser-process RAM is unavailable. CPU geometry inventory excludes splat-private buffers.</p>
       <p class="stats-section-title">USD Stage</p>
       <dl id="usdStageSummary" class="status-list"></dl>
       <p class="stats-section-title">Renderer</p>
@@ -261,6 +266,7 @@ function requireElement<T extends Element>(element: T | null): T {
 }
 
 export const viewportElement = requireElement(app.querySelector<HTMLElement>(".viewport"));
+export const cameraSelect = requireElement(app.querySelector<HTMLSelectElement>("#cameraSelect"));
 export const usdStageSummaryList = requireElement(app.querySelector<HTMLElement>("#usdStageSummary"));
 export const rendererSummaryList = requireElement(app.querySelector<HTMLElement>("#rendererSummary"));
 export const filePicker = requireElement(app.querySelector<HTMLInputElement>("#filePicker"));
@@ -275,7 +281,6 @@ export const statusSpinner = requireElement(app.querySelector<HTMLElement>("#sta
 export const statusLabel = requireElement(app.querySelector<HTMLElement>("#statusLabel"));
 export const runtimeArchitectureLabel = requireElement(app.querySelector<HTMLElement>("#runtimeArchitectureLabel"));
 export const materialXModeLabel = requireElement(app.querySelector<HTMLElement>("#materialXModeLabel"));
-export const splatDegradationLabel = requireElement(app.querySelector<HTMLElement>("#splatDegradationLabel"));
 export const sceneGraphList = requireElement(app.querySelector<HTMLElement>("#sceneGraphList"));
 export const attrPrimPath = requireElement(app.querySelector<HTMLElement>("#attrPrimPath"));
 export const attrList = requireElement(app.querySelector<HTMLElement>("#attrList"));

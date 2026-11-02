@@ -37,7 +37,7 @@ export class PickingController {
       ((clientX - rect.left) / rect.width) * 2 - 1,
       -((clientY - rect.top) / rect.height) * 2 + 1
     );
-    this.raycaster.setFromCamera(ndc, this.ctx.camera);
+    this.raycaster.setFromCamera(ndc, this.ctx.activeCamera);
     const hits = this.raycaster.intersectObjects(this.ctx.stageRoot.children, true);
     for (const hit of hits) {
       if (hit.object instanceof Mesh) {

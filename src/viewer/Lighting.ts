@@ -77,7 +77,7 @@ export class LightingRig {
   constructor(
     private readonly scene: Scene,
     private readonly defaultBackground: Color,
-    renderer: WebGLRenderer
+    renderer: WebGLRenderer | WebGPURenderer
   ) {
     this.usingWebGpuRenderer = isWebGpuRenderer(renderer);
     this.defaultEnvironmentTarget = createRoomEnvironmentTarget(renderer);

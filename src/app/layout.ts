@@ -28,11 +28,13 @@ document.addEventListener("keydown", (e) => {
 let pickMouseStart: { x: number; y: number } | null = null;
 
 viewportElement.addEventListener("mousedown", (e) => {
+  if (!(e.target instanceof HTMLCanvasElement)) return;
   if (e.button !== 0) return;
   pickMouseStart = { x: e.clientX, y: e.clientY };
 });
 
 viewportElement.addEventListener("mouseup", (e) => {
+  if (!(e.target instanceof HTMLCanvasElement)) { pickMouseStart = null; return; }
   if (e.button !== 0 || !pickMouseStart) return;
   const dx = e.clientX - pickMouseStart.x;
   const dy = e.clientY - pickMouseStart.y;

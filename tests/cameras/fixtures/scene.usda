@@ -1,0 +1,71 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 1
+    endTimeCode = 3
+    timeCodesPerSecond = 1
+    framesPerSecond = 1
+    upAxis = "Y"
+)
+def Xform "World" {
+    def ParticleField3DGaussianSplat "BlueSplat" {
+        custom point3f[] positions = [(-1.5,0,1)]
+        custom float3[] scales = [(0.2,0.2,0.2)]
+        custom quatf[] orientations = [(1,0,0,0)]
+        custom float[] opacities = [1]
+        custom float3[] radiance:sphericalHarmonicsCoefficients = [(-1.06,-1.06,1.77)]
+        custom int radiance:sphericalHarmonicsDegree = 0
+    }
+    def Mesh "Card" {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+        color3f[] primvars:displayColor = [(0.8, 0.15, 0.05)]
+        uniform token subdivisionScheme = "none"
+    }
+    def Xform "Rig" {
+        double3 xformOp:translate.timeSamples = { 1: (2,3,4), 3: (6,3,4) }
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        def Camera "Perspective" {
+            token projection = "perspective"
+            float focalLength.timeSamples = { 1: 10, 3: 20 }
+            float horizontalAperture = 20
+            float verticalAperture = 10
+            float horizontalApertureOffset = 2
+            float verticalApertureOffset = 1
+            float2 clippingRange = (1,100)
+            double3 xformOp:translate = (0,0,10)
+            float xformOp:rotateZ = 30
+            float3 xformOp:scale = (100,100,100)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ", "xformOp:scale"]
+        }
+        def Camera "Reset" {
+            double3 xformOp:translate = (-5,2,20)
+            uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate"]
+        }
+    }
+    def Camera "Ortho" {
+        token projection = "orthographic"
+        float horizontalAperture = 40
+        float verticalAperture = 20
+        float2 clippingRange = (1,100)
+        double3 xformOp:translate = (0,0,10)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Xform "Choice" (
+        variants = { string view = "on" }
+        prepend variantSets = "view"
+    ) {
+        variantSet "view" = {
+            "on" {
+                def Camera "VariantCamera" {}
+            }
+            "off" {}
+        }
+    }
+    def Xform "Payload" (prepend payload = @./rig.usda@</Rig>) {}
+    def Xform "Instance" (
+        instanceable = true
+        prepend references = @./rig.usda@</Rig>
+    ) {}
+}
