@@ -8,6 +8,7 @@
     "dev": "vite --host 127.0.0.1 --port 8000 --strictPort",
     "test": "vitest run && node tests/regression/run.mjs",
     "test:unit": "vitest run",
+    "test:cameras": "node tests/cameras/run.mjs",
     "test:regression": "node tests/regression/run.mjs",
     "test:regression:bless": "node tests/regression/run.mjs --update-baselines",
     "materialx:fetch": "node tools/materialx/fetch-official-runtime.mjs",
@@ -35,11 +36,11 @@
     "usd-material-fidelity:shaderball:streams": "node tools/usd-material-fidelity/verify-shaderball-streams.mjs"
   },
   "dependencies": {
-    "@sparkjsdev/spark": "^2.0.0",
-    "three": "https://codeload.github.com/mrdoob/three.js/tar.gz/16e7674dbcda5137e48953959bdf5275f834642a"
+    "@sparkjsdev/radix": "file:vendor/radix-0.0.1-portable.tgz",
+    "three": "0.186.0"
   },
   "devDependencies": {
-    "@types/three": "^0.180.0",
+    "@types/three": "0.186.0",
     "pixelmatch": "^7.1.0",
     "playwright": "^1.54.1",
     "pngjs": "^7.0.0",

@@ -4,7 +4,7 @@ import { copyReleasePublic } from "./tools/native-build/public-assets.mjs";
 import path from "node:path";
 
 export default defineConfig({
-  build: { copyPublicDir: false },
+  build: { copyPublicDir: false, target: "es2022" },
   plugins: [{
     name: "verified-runtime-public-assets",
     apply: "build",
@@ -18,7 +18,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ["@sparkjsdev/spark"],
+    exclude: ["@sparkjsdev/radix"],
   },
   server: {
     host: "127.0.0.1",

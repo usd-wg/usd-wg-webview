@@ -3,6 +3,7 @@ import { attrList, attrPrimPath } from "./dom";
 import { waitForUiPaint } from "./automation";
 import { renderAttributes } from "./attributesPanel";
 import { renderSceneGraph } from "./sceneGraphPanel";
+import { refreshCameras } from "./cameras";
 import { setStatus } from "./statusBar";
 import { assetLabel, collectRendererStats, renderStageSummary } from "./summaries";
 
@@ -35,6 +36,7 @@ export async function applyStageEdit(
 
   const newPrims = runtime.getSceneGraph();
   renderSceneGraph(newPrims);
+  refreshCameras();
   state.currentRendererStats = collectRendererStats(
     renderables,
     runtime.extractGaussianSplats()

@@ -23,6 +23,7 @@ interface FrameAnim {
 
 export class NavigationController {
   private navigationMode: NavigationMode = "orbital";
+  private suspended = false;
   private gameCameraSpeed = 2;
   private gamePointerActive = false;
   private lastFrameTime = performance.now();
@@ -35,8 +36,36 @@ export class NavigationController {
 
   constructor(private readonly ctx: ViewportContext) {}
 
+  setSuspended(suspended: boolean): void {
+    if (this.suspended === suspended) return;
+    this.suspended = suspended;
+    if (suspended) {
+      // Flush residual orbit damping without moving the saved editor view.
+      const camera = this.ctx.camera;
+      const position = camera.position.clone(), rotation = camera.quaternion.clone();
+      const target = this.ctx.controls.target.clone(), zoom = camera.zoom;
+      const damping = this.ctx.controls.enableDamping;
+      this.ctx.controls.enableDamping = false;
+      this.ctx.controls.update();
+      this.ctx.controls.enableDamping = damping;
+      camera.position.copy(position); camera.quaternion.copy(rotation); camera.zoom = zoom;
+      this.ctx.controls.target.copy(target);
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
+    }
+    this.frameAnim = null;
+    this.gamePointerActive = false;
+    this.gameKeys.clear();
+    this.ctx.controls.enabled = !suspended && this.navigationMode === "orbital";
+  }
+
+  updateOrbitControls(): void {
+    if (!this.suspended) this.ctx.controls.update();
+  }
+
   setNavigationMode(mode: NavigationMode): void {
     this.navigationMode = mode;
+    if (this.suspended) return;
     this.ctx.controls.enabled = mode === "orbital";
     if (mode === "game") {
       this.frameAnim = null;
@@ -70,6 +99,7 @@ export class NavigationController {
   }
 
   setCameraPose(pose: CameraPose): void {
+    if (this.suspended) return;
     this.frameAnim = null;
     if (pose.fov !== undefined && Number.isFinite(pose.fov)) {
       this.ctx.camera.fov = pose.fov;
@@ -88,6 +118,7 @@ export class NavigationController {
   }
 
   tickFrameAnim(): void {
+    if (this.suspended) return;
     const a = this.frameAnim;
     if (!a) return;
     // ~18 frames at 60fps ≈ 300ms ease-out
@@ -103,7 +134,7 @@ export class NavigationController {
     const deltaSeconds = Math.min((now - this.lastFrameTime) / 1000, 0.05);
     this.lastFrameTime = now;
 
-    if (this.navigationMode !== "game" || !this.gamePointerActive) {
+    if (this.suspended || this.navigationMode !== "game" || !this.gamePointerActive) {
       return;
     }
 
@@ -153,7 +184,7 @@ export class NavigationController {
   };
 
   private readonly onGameMouseDown = (event: MouseEvent): void => {
-    if (this.navigationMode !== "game" || event.button !== 2) return;
+    if (this.suspended || this.navigationMode !== "game" || event.button !== 2) return;
     event.preventDefault();
     this.gamePointerActive = true;
     this.ctx.controls.enabled = false;
@@ -163,13 +194,13 @@ export class NavigationController {
     if (event.button !== 2) return;
     this.gamePointerActive = false;
     this.gameKeys.clear();
-    if (this.navigationMode === "orbital") {
+    if (!this.suspended && this.navigationMode === "orbital") {
       this.ctx.controls.enabled = true;
     }
   };
 
   private readonly onGameMouseMove = (event: MouseEvent): void => {
-    if (this.navigationMode !== "game" || !this.gamePointerActive) return;
+    if (this.suspended || this.navigationMode !== "game" || !this.gamePointerActive) return;
     event.preventDefault();
 
     const camera = this.ctx.camera;
@@ -183,7 +214,7 @@ export class NavigationController {
   };
 
   private readonly onGameKeyDown = (event: KeyboardEvent): void => {
-    if (this.navigationMode !== "game" || !this.gamePointerActive) return;
+    if (this.suspended || this.navigationMode !== "game" || !this.gamePointerActive) return;
     const key = event.key.toLowerCase();
     if (!"wasdqe".includes(key)) return;
     event.preventDefault();
@@ -195,7 +226,7 @@ export class NavigationController {
   };
 
   private readonly onGameWheel = (event: WheelEvent): void => {
-    if (this.navigationMode !== "game" || !this.gamePointerActive) return;
+    if (this.suspended || this.navigationMode !== "game" || !this.gamePointerActive) return;
     event.preventDefault();
     const multiplier = event.deltaY < 0 ? 1.15 : 1 / 1.15;
     this.setGameCameraSpeed(this.gameCameraSpeed * multiplier);
@@ -207,6 +238,7 @@ export class NavigationController {
   }
 
   animateToBox(box: Box3, keepDirection: boolean): void {
+    if (this.suspended) return;
     const camera = this.ctx.camera;
     const controls = this.ctx.controls;
     const center = new Vector3();

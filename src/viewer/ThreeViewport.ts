@@ -20,13 +20,12 @@ import {
   Texture,
   type ToneMapping,
   Vector3,
-  WebGLRenderer,
   NoToneMapping,
   SRGBColorSpace,
 } from "three";
 import type { WebGPURenderer } from "three/webgpu";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { PrimTransform, RenderableMesh, RenderableGaussianSplat, RenderableLight, RenderableTexture, StageSummary } from "../usd/types";
+import type { PrimTransform, RenderableMesh, RenderableGaussianSplat, RenderableLight, RenderableTexture, StageSummary, StageCameraSample } from "../usd/types";
 import { GaussianSplatRenderer, type SplatViewOptions } from "./GaussianSplatRenderer";
 import {
   applyGeometryGroups,
@@ -44,6 +43,7 @@ import { LightingRig } from "./Lighting";
 import { NavigationController, type CameraPose, type NavigationMode } from "./Navigation";
 import { PickingController } from "./Picking";
 import { RendererManager } from "./RendererManager";
+import { StageCameraView } from "./StageCamera";
 import type { ViewportContext } from "./viewerContext";
 import { collectResourceMetrics } from "./resourceMetrics";
 
@@ -98,7 +98,7 @@ export class ThreeViewport {
   private readonly axesHelper = new AxesHelper(1.25);
   private readonly meshByPath = new Map<string, Mesh>();
   private readonly pathByMesh = new Map<Mesh, string>();
-  private splatRenderer: GaussianSplatRenderer | null;
+  private readonly splatRenderer: GaussianSplatRenderer;
   private animationFrame = 0;
   private frameWindowStart = 0;
   private frameCount = 0;
@@ -120,15 +120,28 @@ export class ThreeViewport {
   private readonly lighting: LightingRig;
   private readonly navigation: NavigationController;
   private readonly picking: PickingController;
+  private readonly stageCamera = new StageCameraView();
+  private stageCameraSample: StageCameraSample | null = null;
+  private readonly cameraGateElement = document.createElement("div");
 
-  constructor(private readonly host: HTMLElement) {
+  static async create(host: HTMLElement): Promise<ThreeViewport> {
+    const renderer = await RendererManager.createRenderer();
+    renderer.info.autoReset = false;
+    try {
+      return new ThreeViewport(host, renderer);
+    } catch (error) {
+      renderer.dispose();
+      throw error;
+    }
+  }
+
+  private constructor(private readonly host: HTMLElement, renderer: WebGPURenderer) {
     const scene = new Scene();
     scene.background = this.defaultBackground;
 
     const camera = new PerspectiveCamera(50, 1, 0.01, 10000);
     camera.position.set(4, 3, 6);
 
-    const renderer = new WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.host.appendChild(renderer.domElement);
 
@@ -136,18 +149,10 @@ export class ThreeViewport {
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
-    this.ctx = { host, camera, scene, stageRoot: this.stageRoot, renderer, controls };
+    this.ctx = { host, camera, activeCamera: camera, scene, stageRoot: this.stageRoot, renderer, controls };
 
-    this.rendererManager = new RendererManager(this.ctx, {
-      beforeSwitch: () => this.navigation.removeGameNavigationHandlers(),
-      afterSwitch: () => this.navigation.installGameNavigationHandlers(),
-      onWebGpuActive: () => {
-        this.lighting.useRenderer(this.ctx.renderer as WebGPURenderer);
-        this.splatRenderer?.dispose();
-        this.splatRenderer = null;
-      },
-    });
-    this.materials = new MaterialFactory(this.textures, () => this.rendererManager.isWebGpuRenderer());
+    this.rendererManager = new RendererManager(this.ctx);
+    this.materials = new MaterialFactory(this.textures, () => true);
     this.lighting = new LightingRig(scene, this.defaultBackground, renderer);
     this.navigation = new NavigationController(this.ctx);
     this.picking = new PickingController(this.ctx, this.meshByPath, this.pathByMesh);
@@ -158,7 +163,14 @@ export class ThreeViewport {
 
     this.splatRenderer = new GaussianSplatRenderer(renderer, scene);
 
-    this.resizeObserver = new ResizeObserver(() => this.rendererManager.resize());
+    this.cameraGateElement.className = "camera-gate";
+    this.cameraGateElement.hidden = true;
+    this.cameraGateElement.setAttribute("aria-hidden", "true");
+    this.host.appendChild(this.cameraGateElement);
+    this.resizeObserver = new ResizeObserver(() => {
+      this.rendererManager.resize();
+      this.refreshStageCamera();
+    });
     this.resizeObserver.observe(this.host);
     this.navigation.installGameNavigationHandlers();
     this.rendererManager.resize();
@@ -190,12 +202,9 @@ export class ThreeViewport {
       onTick?.();
       this.navigation.tickGameNavigation();
       this.navigation.tickFrameAnim();
-      this.ctx.controls.update();
-      if (this.rendererManager.isWebGpuRenderer()) {
-        void (this.ctx.renderer as WebGPURenderer).renderAsync(this.ctx.scene, this.ctx.camera);
-      } else {
-        this.ctx.renderer.render(this.ctx.scene, this.ctx.camera);
-      }
+      this.navigation.updateOrbitControls();
+      this.ctx.renderer.info.reset();
+      this.splatRenderer.render(this.ctx.activeCamera);
       this.animationFrame = window.requestAnimationFrame(render);
     };
 
@@ -209,8 +218,10 @@ export class ThreeViewport {
     };
     return {
       ...collectResourceMetrics(this.stageRoot, this.textures.getTrackedTextures()),
-      backend: this.rendererManager.isWebGpuRenderer() ? "WebGPU" : "WebGL",
-      drawCalls: this.rendererManager.isWebGpuRenderer() ? info.render?.drawCalls : info.render?.calls,
+      backend: this.rendererManager.getBackend(),
+      splatEncodedBytes: this.splatRenderer.getStats().encodedBytes,
+      splatSortMode: this.splatRenderer.getStats().sortMode,
+      drawCalls: info.render?.drawCalls,
       frameTriangles: info.render?.triangles,
       rendererTextures: info.memory?.textures,
       rendererGeometries: info.memory?.geometries,
@@ -222,30 +233,67 @@ export class ThreeViewport {
     };
   }
 
+  getSplatStats() {
+    return { ...this.splatRenderer.getStats(), backend: this.rendererManager.getBackend(),
+      adapter: this.rendererManager.getAdapterInfo() };
+  }
+
+  setStageCamera(sample: StageCameraSample | null): boolean {
+    this.stageCameraSample = sample;
+    if (!sample) {
+      this.ctx.activeCamera = this.ctx.camera;
+      this.cameraGateElement.hidden = true;
+      this.navigation.setSuspended(false);
+      return true;
+    }
+    if (!this.refreshStageCamera()) {
+      this.setStageCamera(null);
+      return false;
+    }
+    this.navigation.setSuspended(true);
+    return true;
+  }
+
+  private refreshStageCamera(): boolean {
+    if (!this.stageCameraSample) return true;
+    this.stageRoot.updateMatrixWorld(true);
+    const stageToView = this.stageRoot.matrixWorld.clone();
+    if (this.normalizeStageToYUp && this.viewUpAxis === "z") stageToView.multiply(Z_UP_TO_Y_UP);
+    if (!this.stageCamera.update(this.stageCameraSample, this.host.clientWidth, this.host.clientHeight, stageToView)) return false;
+    this.ctx.activeCamera = this.stageCamera.camera;
+    const gate = this.stageCamera.gate!;
+    Object.assign(this.cameraGateElement.style, {
+      left: `${gate.left}px`, top: `${gate.top}px`, width: `${gate.width}px`, height: `${gate.height}px`,
+    });
+    this.cameraGateElement.hidden = false;
+    return true;
+  }
+
+  getCameraState() {
+    const camera = this.ctx.activeCamera;
+    return {
+      path: this.stageCameraSample?.path ?? null,
+      projection: camera.type,
+      position: camera.position.toArray(), quaternion: camera.quaternion.toArray(),
+      matrix: camera.matrixWorld.toArray(), projectionMatrix: camera.projectionMatrix.toArray(),
+      near: camera.near, far: camera.far,
+      gate: this.stageCameraSample ? this.stageCamera.gate : null,
+      editorPosition: this.ctx.camera.position.toArray(), editorTarget: this.ctx.controls.target.toArray(),
+      navigationEnabled: this.ctx.controls.enabled,
+    };
+  }
+
   renderForCapture(passes = 3): Promise<void> {
     this.renderQueue = this.renderQueue.then(async () => {
-      this.ctx.controls.update();
-      if (this.rendererManager.isWebGpuRenderer()) {
-        const renderer = this.ctx.renderer as WebGPURenderer & {
-          compileAsync?: (object: Group, camera: PerspectiveCamera, scene: Scene) => Promise<void>;
-          renderAsync?: (scene: Scene, camera: PerspectiveCamera) => Promise<void>;
-        };
-        if (renderer.compileAsync) {
-          await renderer.compileAsync(this.stageRoot, this.ctx.camera, this.ctx.scene);
-        }
-        for (let pass = 0; pass < passes; pass += 1) {
-          if (renderer.renderAsync) {
-            await renderer.renderAsync(this.ctx.scene, this.ctx.camera);
-          } else {
-            renderer.render(this.ctx.scene, this.ctx.camera);
-          }
-          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-        }
-      } else {
-        for (let pass = 0; pass < passes; pass += 1) {
-          this.ctx.renderer.render(this.ctx.scene, this.ctx.camera);
-          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-        }
+      this.navigation.updateOrbitControls();
+      this.ctx.scene.updateMatrixWorld(true);
+      this.ctx.activeCamera.updateMatrixWorld(true);
+      await this.splatRenderer.settle(this.ctx.activeCamera);
+      await this.ctx.renderer.compileAsync(this.stageRoot, this.ctx.activeCamera, this.ctx.scene);
+      for (let pass = 0; pass < passes; pass += 1) {
+        this.ctx.renderer.info.reset();
+        this.splatRenderer.render(this.ctx.activeCamera);
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
     });
     return this.renderQueue;
@@ -256,13 +304,14 @@ export class ThreeViewport {
     this.resizeObserver.disconnect();
     this.navigation.removeGameNavigationHandlers();
     this.ctx.controls.dispose();
-    this.splatRenderer?.dispose();
+    this.splatRenderer.dispose();
     this.picking.clearSelectedInstanceOverlays();
     this.materials.dispose();
     this.lighting.dispose();
     this.textures.revokeTextureUrls();
     this.ctx.renderer.dispose();
     this.ctx.renderer.domElement.remove();
+    this.cameraGateElement.remove();
   }
 
   renderStage(
@@ -298,9 +347,6 @@ export class ThreeViewport {
   }
 
   renderGaussianSplats(splats: RenderableGaussianSplat[]): void {
-    if (!this.splatRenderer) {
-      return;
-    }
     this.splatRenderer.renderSplats(splats);
     if (splats.length > 0 && this.meshByPath.size === 0) {
       this.frameSplats(splats);
@@ -334,7 +380,6 @@ export class ThreeViewport {
 
   async prepareForRenderables(renderables: RenderableMesh[]): Promise<void> {
     if (renderables.some((renderable) => renderableHasMaterialX(renderable))) {
-      await this.rendererManager.ensureWebGpuRenderer();
       await this.materials.prepareMaterialXMaterials(renderables);
     }
   }
@@ -393,8 +438,8 @@ export class ThreeViewport {
             materialXTextureResolutions: material.userData.webviewMaterialXTextureResolutions,
             hasMap: !!record.map,
             mapName: record.map?.name,
-            mapImageWidth: record.map?.image?.width ?? null,
-            mapImageHeight: record.map?.image?.height ?? null,
+            mapImageWidth: (record.map?.image as { width?: number } | undefined)?.width ?? null,
+            mapImageHeight: (record.map?.image as { height?: number } | undefined)?.height ?? null,
           };
         }),
       });
@@ -597,7 +642,6 @@ export class ThreeViewport {
   async updateRenderablesAsync(renderables: RenderableMesh[]): Promise<void> {
     const textureLoads: Promise<void>[] = [];
     if (renderables.some((renderable) => renderableHasMaterialX(renderable))) {
-      await this.rendererManager.ensureWebGpuRenderer();
       await this.materials.prepareMaterialXMaterials(renderables);
     }
     for (const sourceRenderable of renderables) {
@@ -708,6 +752,7 @@ export class ThreeViewport {
     this.lighting.setViewUpAxis(this.viewUpAxis);
     this.splatRenderer?.setViewUpAxis(this.viewUpAxis);
     this.applyReferenceModelNormalization();
+    this.refreshStageCamera();
   }
 
   private toRenderCoordinateSpace(renderable: RenderableMesh): RenderableMesh {
@@ -798,7 +843,13 @@ export class ThreeViewport {
   }
 
   pickPrim(clientX: number, clientY: number): string | null {
-    const lightPath = this.lighting.pickLight(clientX, clientY, this.ctx.host, this.ctx.camera);
+    if (this.stageCameraSample && this.stageCamera.gate) {
+      const rect = this.host.getBoundingClientRect();
+      const gate = this.stageCamera.gate;
+      const x = clientX - rect.left, y = clientY - rect.top;
+      if (x < gate.left || x > gate.left + gate.width || y < gate.top || y > gate.top + gate.height) return null;
+    }
+    const lightPath = this.lighting.pickLight(clientX, clientY, this.ctx.host, this.ctx.activeCamera);
     if (lightPath) {
       return lightPath;
     }
@@ -833,7 +884,7 @@ export class ThreeViewport {
   }
 
   private frameSplats(splats: RenderableGaussianSplat[]): void {
-    // SplatMesh doesn't participate in Box3.setFromObject, so derive a
+    // Splat data doesn't participate in Box3.setFromObject, so derive a
     // rough world-space bounding box from the prim transform matrix.
     // USD matrix is row-major; translation is row 3 = m[12..14].
     // Scale estimate = max length of the three rotation/scale rows.

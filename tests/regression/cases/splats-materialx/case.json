@@ -1,0 +1,13 @@
+{
+  "id": "splats-materialx",
+  "rootFile": "scene.usda",
+  "notes": "MaterialX cube occludes the blue rear splat. Red front splat and transformed SH3 side splat remain visible. Payload edits exercise collection replacement and resource release.",
+  "splatCount": 3,
+  "captures": [
+    { "name": "full-sh", "reference": { "camera": { "position": [0, 0, 6], "target": [0.3, 0, 0] }, "axesVisible": false }, "splatOptions": { "maxShDegree": 3, "scaleMultiplier": 1 } },
+    { "name": "base-color", "splatOptions": { "maxShDegree": 0, "scaleMultiplier": 1 } },
+    { "name": "scaled", "splatOptions": { "maxShDegree": 3, "scaleMultiplier": 1.5 } },
+    { "name": "unloaded", "payloadOps": [{ "primPath": "/World/Splats", "loaded": false }], "splatCount": 0 },
+    { "name": "reloaded", "payloadOps": [{ "primPath": "/World/Splats", "loaded": true }], "splatOptions": { "maxShDegree": 3, "scaleMultiplier": 1 }, "splatCount": 3 }
+  ]
+}

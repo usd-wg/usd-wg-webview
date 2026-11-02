@@ -10,6 +10,8 @@ import type {
   RenderPurposePolicy,
   RuntimeStatus,
   SceneGraphPrim,
+  StageCamera,
+  StageCameraSample,
   StageLoadRequest,
   StageLoadResult,
   StageSummary,
@@ -318,6 +320,16 @@ export class UsdWebViewRuntime {
   getSceneGraph(): SceneGraphPrim[] {
     if (!this.bindings?.getSceneGraph || !this.currentStagePath) return [];
     return this.bindings.getSceneGraph(this.currentStagePath);
+  }
+
+  getStageCameras(): StageCamera[] {
+    if (!this.currentStagePath) return [];
+    return this.bindings?.getStageCameras?.(this.currentStagePath) ?? [];
+  }
+
+  sampleStageCamera(cameraPath: string, timeCode: number): StageCameraSample | null {
+    if (!this.currentStagePath) return null;
+    return this.bindings?.sampleStageCamera?.(this.currentStagePath, cameraPath, timeCode) ?? null;
   }
 
   getPrimAttributes(primPath: string): PrimAttribute[] {

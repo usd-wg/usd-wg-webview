@@ -22,6 +22,7 @@ endif()
 
 add_executable(usdWebViewBindingsModule
     src/bindings.cpp
+    src/cameras.cpp
     src/jsInterop.cpp
     src/lights.cpp
     src/materials.cpp

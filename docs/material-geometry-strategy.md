@@ -98,11 +98,32 @@ materials arrive coherently by construction.
 
 ## Known degradations and constraints
 
-- **Gaussian splats + MaterialX**: SparkJS renders splats on the WebGL path
-  only. MaterialX uses Three's WebGPU/TSL path, so the viewport may switch to
-  `WebGPURenderer` and drop splat rendering.
-- **Headless automation** cannot present real-WebGPU canvases; the regression
-  runner passes `?forceWebGL=1` for cases that explicitly require WebGPU.
+- **Gaussian splats + MaterialX** share one initialized TSL renderer using
+  Spark Radix. An explicit GPU color/depth composition preserves sRGB splat
+  blending over linear-lit meshes; transparent mesh intersections remain an
+  approximation. See [Gaussian splats](gaussian-splats.md).
+- **Headless automation** defaults to the deterministic WebGL2 backend.
+  `--backend webgpu` uses full Chromium headless and asserts the actual backend.
+  Hardware/driver support is required; a software fallback cannot pass this run.
+
+## Stage cameras
+
+Stage camera views use a separate side supplier, `cameras.cpp`. `GetStageCameras`
+enumerates active loaded cameras (including instance proxies); `SampleStageCamera`
+uses `UsdGeomCamera::GetCamera(time)` and `GfFrustum` to resolve the rigid world
+pose and optics without baking or modifying the stage. The TypeScript runtime
+samples only the selected camera during playback. This does not re-extract or
+re-encode Gaussian splats.
+
+The viewport keeps the editor camera and OrbitControls separate from two reusable
+stage-view cameras (perspective and orthographic). Rendering, splat sorting,
+captures and picking use the active camera. `StageCameraView` converts USD optical
+units, fits the authored aperture inside the viewport, and applies the same
+stage-to-view transform as geometry. Editor navigation is suspended during stage
+camera viewing. Composition edits refresh the list and return to the editor if
+the selected path no longer exists. Tests cover parent animation, fractional
+time, animated focal length, camera scale, roll, resetXformStack, instance proxies,
+payload/variant removal, Z-up, resizing, picking and restoring editor navigation.
 
 ## Remaining performance opportunities
 

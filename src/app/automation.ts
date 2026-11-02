@@ -2,7 +2,9 @@ import { runtime, state } from "./appState";
 import { sampleAnimationFrame, updatePlaybarScrubber } from "./animation";
 import { loadAutomationManifestStage } from "./loadOrchestrator";
 import { applyStageEdit } from "./stageEdits";
+import { selectCamera } from "./cameras";
 import type { ReferenceCaptureOptions, ViewportDebugMaterialInfo } from "../viewer/ThreeViewport";
+import type { SplatViewOptions } from "../viewer/GaussianSplatRenderer";
 
 export type AutomationManifest = {
   caseId?: string;
@@ -25,6 +27,8 @@ export type AutomationApi = {
   loadManifest(manifestUrl: string, timeoutMs?: number): Promise<AutomationState>;
   configureReferenceCapture(options: ReferenceCaptureOptions): Promise<void>;
   setTime(timeCode: number): Promise<void>;
+  selectCamera(path: string | null): Promise<boolean>;
+  getCameraState(): ReturnType<typeof state.viewport.getCameraState>;
   setVariantSelection(
     primPath: string,
     variantSetName: string,
@@ -34,6 +38,8 @@ export type AutomationApi = {
   settle(frameCount?: number): Promise<void>;
   renderForCapture(passes?: number): Promise<void>;
   getViewportDebugMaterialInfo(): ViewportDebugMaterialInfo[];
+  getSplatStats(): ReturnType<typeof state.viewport.getSplatStats>;
+  setSplatOptions(options: SplatViewOptions): void;
 };
 
 declare global {
@@ -160,6 +166,14 @@ window.__USD_WEBVIEW_AUTOMATION__ = {
     sampleAnimationFrame(timeCode);
     await waitForSettledFrames();
   },
+  async selectCamera(path: string | null): Promise<boolean> {
+    const selected = selectCamera(path);
+    await waitForSettledFrames();
+    return selected;
+  },
+  getCameraState() {
+    return state.viewport.getCameraState();
+  },
   async setVariantSelection(
     primPath: string,
     variantSetName: string,
@@ -190,5 +204,11 @@ window.__USD_WEBVIEW_AUTOMATION__ = {
   },
   getViewportDebugMaterialInfo(): ViewportDebugMaterialInfo[] {
     return state.viewport.getDebugMaterialInfo();
+  },
+  getSplatStats() {
+    return state.viewport.getSplatStats();
+  },
+  setSplatOptions(options) {
+    state.viewport.setSplatViewOptions(options);
   },
 };

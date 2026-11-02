@@ -36,14 +36,14 @@ current Three.js WebGPU implementation.
 
 ## Supported USDLux Prims
 
-| USDLux source | WebGL viewport | WebGPU viewport |
+| USDLux source | WebGL2 compatibility | WebGPU viewport |
 | --- | --- | --- |
 | `DomeLight`, `DomeLight_1` | Environment/background texture | Environment/background texture |
 | `DistantLight` | `DirectionalLight` | `DirectionalLight` |
 | unshaped `SphereLight` | `PointLight` | `PointLight` |
 | shaped `SphereLight` | `SpotLight` | `SpotLight` |
-| `RectLight` | `RectAreaLight` | `SpotLight` approximation |
-| unshaped `DiskLight` | square `RectAreaLight` approximation | `SpotLight` approximation |
+| `RectLight` | `SpotLight` approximation | `SpotLight` approximation |
+| unshaped `DiskLight` | `SpotLight` approximation | `SpotLight` approximation |
 | shaped `DiskLight` | `SpotLight` | `SpotLight` |
 
 Unsupported USDLux forms are reported once in the console and omitted from
@@ -88,27 +88,10 @@ area. This is an approximation so edits to radius, width, and height are
 visible in the interactive renderer. When `inputs:normalize` is true, size does
 not scale intensity.
 
-## WebGL Behavior
+## Renderer Behavior
 
-WebGL has the most complete light mapping currently available in this viewer:
-
-- `RectLight` maps to `RectAreaLight`.
-- unshaped `DiskLight` maps to a square `RectAreaLight` approximation with the
-  same diameter.
-- wire gizmos are drawn with Three.js `Line` objects.
-
-Limitations:
-
-- `DiskLight` is not a true disk emitter; it is square in lighting influence.
-- `RectAreaLight` is still a raster approximation and does not match a path
-  tracer for soft shadows, textured emitters, or volumetric scattering.
-- No USDLux shadow, shaping, barn-door, linking, collection, or light-filter
-  fidelity is guaranteed beyond the explicitly extracted fields.
-
-## WebGPU Behavior
-
-WebGPU is used for MaterialX content. Its direct-light support is currently
-more limited in this Three.js path:
+All content uses Three's TSL renderer, preferring WebGPU and falling back to
+its WebGL2 backend. Both backends currently use the same light mappings:
 
 - `DistantLight`, `PointLight`, and `SpotLight` mappings are used directly.
 - `RectLight` and unshaped `DiskLight` are rendered as `SpotLight`
@@ -116,9 +99,10 @@ more limited in this Three.js path:
 - the authored rect/disk wire gizmo still shows the source light shape even
   though the lighting influence is approximated.
 
-The viewer avoids `RectAreaLight` in WebGPU because the current Three.js
-WebGPU/TSL path fails while setting up rect-area-light LTC data. Revisit this
-when Three.js WebGPU area-light support is stable.
+The previous classic WebGL renderer used `RectAreaLight` for rect/unshaped
+disk lights. Moving to a shared TSL renderer retains the existing TSL spot
+approximation on both backends. Adopting Three's node area-light LTC setup is
+separate follow-up work; the Three upgrade alone does not enable it here.
 
 Limitations:
 
@@ -126,6 +110,7 @@ Limitations:
 - no true area-light sampling
 - no path-traced multiple scattering or volumetric contribution
 - no mesh, geometry, portal, plugin, cylinder, or volume light conversion
+- no guaranteed shadow, barn-door, linking, collection, or light-filter fidelity
 - very large HDR/EXR environments may hit browser or adapter memory limits;
   EXR textures are loaded through the half-float path to keep uploads smaller
 

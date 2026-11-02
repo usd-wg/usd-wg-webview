@@ -245,11 +245,17 @@ export function syncViewportState(target: ThreeViewport): void {
   target.setLightGizmosVisible(state.lightGizmosVisible);
 }
 
-export function replaceViewport(): void {
+export async function replaceViewport(loadSerial: number): Promise<boolean> {
+  const viewport = await ThreeViewport.create(viewportElement);
+  if (loadSerial !== state.stageLoadSerial) {
+    viewport.dispose();
+    return false;
+  }
   state.viewport.dispose();
-  state.viewport = new ThreeViewport(viewportElement);
+  state.viewport = viewport;
   syncViewportState(state.viewport);
   state.viewport.start(onTick);
+  return true;
 }
 
 for (const button of app.querySelectorAll<HTMLButtonElement>("[data-navigation-mode]")) {

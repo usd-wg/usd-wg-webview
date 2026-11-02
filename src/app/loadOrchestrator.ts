@@ -11,9 +11,10 @@ import {
   type AutomationManifest,
 } from "./automation";
 import { hidePlaybar, showPlaybar, updatePlaybarScrubber } from "./animation";
+import { clearCameras, refreshCameras } from "./cameras";
 import { applyLightingOptions, applyUpAxisOptions, replaceViewport } from "./menus";
 import { clearSceneGraph, renderSceneGraph } from "./sceneGraphPanel";
-import { renderRuntimeStatus, setStageHasGaussianSplats, setStatus } from "./statusBar";
+import { renderRuntimeStatus, setStatus } from "./statusBar";
 import { assetLabel, collectRendererStats, renderStageSummary } from "./summaries";
 
 export async function loadFiles(files: File[]): Promise<void> {
@@ -25,8 +26,8 @@ export async function loadFiles(files: File[]): Promise<void> {
   state.stageLoadElapsedMs = null;
 
   hidePlaybar();
+  clearCameras();
   state.isLoadingStage = true;
-  setStageHasGaussianSplats(false);
   setStatus("loading USD stage...", true);
   if (automationEnabled) {
     setAutomationState("loading", "loading USD stage...");
@@ -44,10 +45,10 @@ export async function loadFiles(files: File[]): Promise<void> {
     rootFile: rootFile?.webkitRelativePath || rootFile?.name || "Unknown",
   };
   renderStageSummary(state.currentStageSummary);
-  replaceViewport();
 
   let result: StageLoadResult;
   try {
+    if (!await replaceViewport(loadSerial)) return;
     result = await runtime.loadStage({
       files,
       rootFile,
@@ -73,12 +74,12 @@ export async function loadFiles(files: File[]): Promise<void> {
   }
 
   state.currentStageSummary = result.summary;
+  state.animCurrent = result.summary?.startTimeCode ?? 0;
   applyUpAxisOptions();
   renderRuntimeStatus(runtime.status);
   const gaussianSplats = result.gaussianSplats ?? [];
   const renderables = result.renderables ?? [];
   const lights = result.lights ?? [];
-  setStageHasGaussianSplats(gaussianSplats.length > 0);
   await state.viewport.prepareForRenderables(renderables);
   if (loadSerial !== state.stageLoadSerial) {
     return;
@@ -167,6 +168,7 @@ export async function loadFiles(files: File[]): Promise<void> {
   }
   if (loadSerial === state.stageLoadSerial) {
     state.isLoadingStage = false;
+    refreshCameras();
     state.stageLoadElapsedMs = performance.now() - state.stageLoadStartedAt!;
     const stageFailed = !!result.summary?.error;
     const inferredCount = result.diagnostics?.inferredBindingCount ?? 0;

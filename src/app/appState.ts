@@ -1,6 +1,6 @@
 import { LinearSRGBColorSpace, SRGBColorSpace } from "three";
 import { UsdWebViewRuntime } from "../usd/UsdWebViewRuntime";
-import type { RenderPurposePolicy, StageSummary } from "../usd/types";
+import type { RenderPurposePolicy, StageSummary, StageCamera } from "../usd/types";
 import type { SceneGraphPrim } from "../usd/types";
 import { ThreeViewport, type NavigationMode, type ViewUpAxis } from "../viewer/ThreeViewport";
 import { viewportElement } from "./dom";
@@ -51,7 +51,7 @@ if (localStorage.getItem(loadAllPayloadsOnStageOpenStorageKey) === null) {
 export const runtime = new UsdWebViewRuntime();
 
 export const state = {
-  viewport: new ThreeViewport(viewportElement),
+  viewport: await ThreeViewport.create(viewportElement),
 
   // View options
   splatFidelityIndex: splatFidelityOptions.length - 1,
@@ -75,6 +75,8 @@ export const state = {
 
   // Stage state
   currentStageSummary: null as StageSummary | null,
+  stageCameras: [] as StageCamera[],
+  selectedCameraPath: null as string | null,
   currentRendererStats: null as RendererStats | null,
   isLoadingStage: false,
   stageLoadStartedAt: null as number | null,

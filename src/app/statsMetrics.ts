@@ -47,6 +47,8 @@ export function renderStatsMetrics(): void {
   });
   show("resourceMetrics", {
     "backend": resources.backend,
+    "splat sorting": resources.splatSortMode === "gpu" ? "GPU" : "CPU worker",
+    "splat encoded payload": formatBytes(resources.splatEncodedBytes),
     "canvas pixels": `${resources.width} × ${resources.height}`,
     "frame interval (CPU)": formatDuration(resources.frameIntervalMs),
     "FPS (approx.)": resources.frameIntervalMs ? (1000 / resources.frameIntervalMs).toFixed(1) : "—",
